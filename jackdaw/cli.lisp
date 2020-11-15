@@ -34,9 +34,11 @@
        (jackdaw::process-dataset model ;(retrieve-dataset dataset) t)
 				 (sort (retrieve-dataset dataset) #'string< :key #'car) t)
        (unless (null freeze)
-	 (with-open-file (s freeze :direction :output :if-exists :supersede
-			    :if-does-not-exist :create)
-	   (jackdaw::serialize model s))))))
+	 (if (string-equal freeze "stdout")
+	     (jackdaw::serialize model t)
+	   (with-open-file (s freeze :direction :output :if-exists :supersede
+			      :if-does-not-exist :create)
+			   (jackdaw::serialize model s)))))))
 
 
 (defun parse-token (token)
