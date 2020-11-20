@@ -2,7 +2,7 @@
   (:use #:common-lisp)
   (:nicknames pr)
   (:export
-   "ADD" "MUL" "DIV" "IN" "OUT" "LOGARITHM" "ENTROPY")
+   "ADD" "MUL" "DIV" "IN" "OUT" "LOGARITHM" "ENTROPY" "*LOG-SPACE*")
   (:documentation "Tools for manipulating probabilities which may or 
 may not be represented logarithmically."))
 

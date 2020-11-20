@@ -6,8 +6,10 @@
   ((arguments :initarg :arguments :reader arguments :initform nil)
    (variable :initarg :variable :reader dist-var)))
 (defclass bernouilli (distribution)
-  ((p :initarg :p :accessor p :initform .5)
-   (symbols :initarg :symbols :accessor symbols)))
+  ((p :initarg :p :accessor p
+      :initform (required-arg p bernouilli))
+   (psymbol :initarg :psymbol :accessor psymbol
+	    :initform (required-arg symbol bernouilli))))
 (defclass categorical (distribution)
   ((category-counts :accessor category-counts :initform (make-hash-table :test #'equal))
    (p :reader p :initform (make-hash-table :test #'equal))))
@@ -27,10 +29,10 @@
 
 (defwriter distribution (m) nil)
 (defreader distribution (m d) (declare (ignorable d)))
-(defwriter bernouilli (m) (list (p m) (symbols m)))
+(defwriter bernouilli (m) (list (p m) (psymbol m)))
 (defreader bernouilli (m d)
   (setf (slot-value m 'p) (first d)
-	(slot-value m 'symbols) (second d)))
+	(slot-value m 'psymbol) (second d)))
 (defwriter categorical (m) (hash-table->alist (p m)))
 (defreader categorical (m p) (setf (slot-value m 'p) (alist->hash-table p)))
 (defwriter ppm:ppm (m)
@@ -194,15 +196,10 @@ parent variables are instantiated."
 (defmethod probability ((d uniform) arguments symbol) (pr:in 1)) ; is normalised later
 
 (defmethod probability ((d bernouilli) arguments symbol)
-  (when (not (null arguments))
-    (warn "It looks like you're conditioning a Bernouilli distribution on something,
-the implementation does not support this."))
-  (pr:in (if (equal symbol (car (symbols d)))
-	     (p d)
-	     (progn
-	       (unless (equal symbol (cadr (symbols d)))
-		 (warn "Generating (1 - p) probability for unfamiliar symbol."))
-	       (- 1 (p d))))))
+  (let ((p (if (null arguments) (p d)
+	       (cdr (assoc arguments (p d) :test #'equal)))))
+  (pr:in (if (equal symbol (psymbol d)) p
+	     (- 1 p)))))
 
 (defmethod set-param ((d categorical) arguments symbol probability)
   "Set probability of distribution parameter. Probabilities must be given not in

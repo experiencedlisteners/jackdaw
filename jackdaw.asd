@@ -16,9 +16,7 @@
    (:module jackdaw
 	    :serial t
             :components 
-            ((:file "jackdaw")
-             (:file "distributions")
-	     (:file "models/models")
-	     (:file "downbeat-distance")
-	     (:file "temperley")
-	     (:file "viewpoint")))))
+            ((:file "package")
+	     (:file "util")
+	     (:file "jackdaw")
+             (:file "distributions")))))
