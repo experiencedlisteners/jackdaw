@@ -1,9 +1,9 @@
 (cl:in-package #:jackdaw)
 ;; Special symbols
 
-(defvar +inactive+ '*)
+(defvar +inactive+ '%inactive)
 (defvar +singleton+ (list +inactive+))
-(defvar +ngram-filler+ '*)
+(defvar +ngram-filler+ '%ngram-filler)
 
 ;; Global parameters for CSV output writing.
 
@@ -107,7 +107,7 @@ its value from a model state."
 (defun previous (v)
   (intern (format nil "^~A" (symbol-name v))))
 
-(defun apriori? (v)
+(defun previous? (v)
   (eq (elt (symbol-name v) 0) #\^))
 
 (defun basename (s)
