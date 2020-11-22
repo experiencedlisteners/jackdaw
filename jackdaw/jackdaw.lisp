@@ -460,6 +460,14 @@ inactive variables have been pruned."
 (defmethod evidence ((m generative-model) congruent-states)
   (apply #'probabilities:add
 	 (loop for s in congruent-states collect (gethash :probability s))))
+
+(defmethod posterior-distribution ((m generative-model) congruent-states variables)
+  (let ((table (marginalize congruent-states (mapcar #'previous variables)))
+	(evidence (evidence m congruent-states)))
+    (loop for param being the hash-key using (hash-value prob) of table do
+      (setf (gethash param table) (/ (car prob) evidence)))
+    table))
+	    
   
 ;; Model serialization
 
