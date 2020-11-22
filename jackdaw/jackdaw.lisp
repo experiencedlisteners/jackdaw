@@ -183,7 +183,7 @@ stem. For example, if S is :^X, (BASENAME S) is :X."
 	   collect
 	   (destructuring-bind (v parents distribution constraint
 				&key (key `(lambda (m) (getf m ',(%kw v))))
-				  (formatter '#'identity) hidden)
+				  (formatter '#'identity) (hidden t))
 	       variable
 	     (push v vertices)
 	     (setf (gethash v distributions) distribution)
