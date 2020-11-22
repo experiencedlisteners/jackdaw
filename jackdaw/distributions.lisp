@@ -5,6 +5,7 @@
 (defclass distribution ()
   ((arguments :initarg :arguments :reader arguments :initform nil)
    (variable :initarg :variable :reader dist-var)))
+(defclass deterministic (distribution) ())
 (defclass bernouilli (distribution)
   ((p :initarg :p :accessor p
       :initform (required-arg p bernouilli))
@@ -212,6 +213,13 @@ log representation. Caller must ensure probabilities sum to one."
     (unless found?
       (warn "Categorical probability of ~a given ~a not found." symbol arguments))
     (pr:in p)))
+
+(defmethod probabilities ((d deterministic) parents-state congruent-states)
+  (assert (eq (length congruent-states) 1) ()
+	  "Variable with deterministic distribution must have exactly one congruent state.")
+  (let ((table (make-hash-table :test #'equal)))
+    (setf (gethash (car congruent-states) table) (pr:in 1))
+    table))
 
 (defmethod probabilities ((d distribution) parents-state congruent-states)
   "Obtain the probability of provided CONGRUENT-STATES by the PROBABILITY method.
