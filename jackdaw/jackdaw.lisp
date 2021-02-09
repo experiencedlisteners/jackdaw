@@ -5,6 +5,15 @@
 (defvar +singleton+ (list +inactive+))
 (defvar +ngram-filler+ '%ngram-filler)
 
+;; Globals for enabling meta-programming with models
+
+(defparameter *models* nil) ; list of defined models
+(defparameter *model-parameters* nil) ; plist of parameters per model
+
+(defun get-model (model-keyword)
+  (when (member model-keyword *models*)
+    (find-symbol (symbol-name model-keyword))))
+
 ;; Global parameters for CSV output writing.
 
 (defparameter *sequence* nil)
@@ -26,16 +35,17 @@
 ;; Objects
 
 (defclass generative-model (dag)
-  ((output :accessor output :initarg :output :initform nil)
+  ((%var-specs :allocation :class :type list)
+   (%dist-specs :allocation :class :type list)
+   (output :accessor output :initarg :output :initform nil)
    (outputvars :accessor outputvars :initform nil :initarg :outputvars)
-   (variables :initarg :variables :reader variables :type hash-table
-	      :initform (required-arg variables generative-model))))
+   (distributions :reader distributions :type hash-table)
+   (variables :reader variables :type hash-table)))
 
 (defclass random-variable ()
   ((name :initarg :name :reader name)
    (output :initarg :output :reader output)
    (hidden :initarg :hidden :accessor hidden :initform nil)
-   (distribution :reader distribution)
    (key :initarg :key :reader key)))
 
 (defclass dag ()
@@ -164,31 +174,34 @@ stem. For example, if S is :^X, (BASENAME S) is :X."
   `(error ,(format nil "~a is a required initialization argument of ~a."
 		   (%kw symbol) cls)))
   
-;; Model definition macro
-
 (defmacro defmodel (class superclasses parameters variables)
+  "Model definition macro
+
+Create a model class with name CLASS and superclasses SUPERCLASSES.
+PARAMETERS is a lambda list which supports default values and &key 
+arguments but not &optional or (a default a-supplied-p) style parameters.
+VARIABLES is a list of variable definitions."
   (let ((direct-slots (%lambda-list->direct-slots parameters class))
 	(edges (make-hash-table))
-	(distributions (make-hash-table))
-	(var-specs) (vertices))
+	(dist-specs) (var-specs) (vertices))
     (assert (or (null superclasses)
 		(eq (length (remove-if (lambda (c) (subtypep c 'generative-model)) superclasses))
 		    (1- (length superclasses))))
 	    () "At least one superclass of ~a must be of type GENERATIVE-MODEL." class)
     `(muffle-redefinition-warnings
-       (defclass ,class ,(if (null superclasses) '(generative-model) superclasses)
-	 (,@direct-slots))
+       ;; Initialize dist-specs, var-specs, and vertices, verify model consistency,
+       ;; and define congruency constraint methods.
        ,@(loop
-	   for variable in variables
+	   for variable in (reverse variables) ; since where PUSHing
 	   collect
 	   (destructuring-bind (v parents distribution constraint
 				&key (key `(lambda (m) (getf m ',(%kw v))))
 				  (formatter '#'identity) (hidden t))
 	       variable
-	     (push v vertices)
-	     (setf (gethash v distributions) distribution)
 	     (setf (gethash v edges) parents)
-	     (push (list v key formatter hidden) var-specs)
+	     (push v vertices)
+	     (push distribution dist-specs)
+	     (push (list key formatter hidden) var-specs)
 	     `(progn
 		(defmethod ,(congruency-function v) ((model ,class) args)
 		  (declare (ignorable model))
@@ -204,41 +217,44 @@ stem. For example, if S is :^X, (BASENAME S) is :X."
 		      (error (e)
 			(warn "Error in a priori congruency constraint of ~A!" ',v)
 			(error e))))))))
+       (defclass ,class ,(if (null superclasses) '(generative-model) superclasses)
+	 ((%var-specs :initform ',var-specs)
+	  (%dist-specs :initform ',dist-specs)
+	  ,@direct-slots))
        (defmethod vertices ((m ,class))
 	 ',vertices)
        (defmethod edge-table ((m ,class)) ,edges)
+       (push (%kw ',class) *models*)
+       (setf (getf *model-parameters* (%kw ',class)) ',parameters)
        (defun ,(intern (format nil "MAKE-~A-INSTANCE" (symbol-name class)))
 	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output outputvars)
-	 ,(let ((x (gensym)))
-	    `(let ((,x (make-hash-table)))
-	       ,@(loop
-		   for (v key formatter hidden) in var-specs
-		   collect
-		   `(setf (gethash ',v ,x)
-			  (make-instance
-			   'jackdaw::random-variable
-			   :hidden ,hidden
-			   :name ',v :key ,key :output ,formatter)))
-	       (let ((,class (make-instance ',class :variables ,x
-					    :output output :outputvars outputvars
-					    ,@(%lambda-list->plist parameters))))
-		 ,@(loop
-		     for v in vertices
-		     collect
-		     (destructuring-bind (dist dist-args &rest dist-params)
-			 (gethash v distributions)
-		       (assert (subsetp dist-args (gethash v edges))
-			       () "Arguments to distribution of ~a must be subset of parents." v)
-		       (assert (subtypep dist 'distribution) ()
-			       "Distribution argument of the variable ~a (~a) must be of type DISTRIBUTION." 
-			       v dist)
-		       `(let ((distribution
-				(make-instance ',dist :arguments ',dist-args
-						      :variable ',v
-						      ,@dist-params)))
-			  (setf (slot-value (gethash ',v (variables ,class)) 'distribution)
-				distribution))))
-		 ,class)))))))
+	 (make-instance ',class :output output :outputvars outputvars
+			,@(%lambda-list->plist parameters))))))
+
+(defmethod initialize-instance :after ((model generative-model) &key)
+  (let ((variables (make-hash-table))
+	(distributions (make-hash-table)))
+    (loop for v in (vertices model)
+	  for (key formatter hidden) in (slot-value model '%var-specs)
+	  for dist-spec in (slot-value model '%dist-specs)
+	  do
+	     (destructuring-bind (dist dist-args &rest dist-params) dist-spec
+	       (assert (subsetp dist-args (edges model v))
+		       () "Arguments to distribution of ~a must be subset of parents." v)
+	       (assert (subtypep dist 'distribution) ()
+		       "Distribution argument of the variable ~a (~a) must be of type DISTRIBUTION." 
+		       v dist)
+	       (setf (gethash v distributions)
+		     (apply #'make-instance dist
+			    (append (list :arguments dist-args
+					  :variable v)
+				    dist-params)))
+	       (setf (gethash v variables)
+		     (make-instance
+		      'jackdaw::random-variable
+		      :hidden hidden
+		      :name v :key key :output formatter))))
+    (setf (slot-value model 'variables) variables)))
 
 
 ;; Model mechanics
@@ -275,7 +291,7 @@ stem. For example, if S is :^X, (BASENAME S) is :X."
     (setf (hidden (gethash v (variables m))) nil)))
 
 (defmethod get-var-distribution ((m generative-model) variable)
-  (distribution (gethash variable (variables m))))
+  (gethash variable (distributions m)))
 
 (defmethod marginal-params ((m generative-model))
   (let* ((horizontal-dependencies
