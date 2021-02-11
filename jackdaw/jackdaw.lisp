@@ -10,9 +10,16 @@
 (defparameter *models* nil) ; list of defined models
 (defparameter *model-parameters* nil) ; plist of parameters per model
 
-(defun get-model (model-keyword)
-  (when (member model-keyword *models*)
-    (find-symbol (symbol-name model-keyword))))
+(defun model-exists? (model-symbol-or-name)
+  (not (null (find-model model-symbol-or-name))))
+
+(defun find-model (model-symbol-or-name)
+  (let ((symbol (find-symbol (if (stringp model-symbol-or-name)
+				 (string-upcase model-symbol-or-name)
+				 (symbol-name model-symbol-or-name))
+			     :jackdaw)))
+    (when (subtypep symbol 'generative-model)
+      symbol)))
 
 ;; Global parameters for CSV output writing.
 
