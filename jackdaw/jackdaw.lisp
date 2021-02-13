@@ -46,7 +46,7 @@
    (%parameter-slots :reader %parameter-slots :allocation :class :type list)
    ;;(%dist-specs :allocation :class :type list)
    (output :accessor output :initarg :output :initform nil)
-   (outputvars :accessor outputvars :initform nil :initarg :outputvars)
+   (output-vars :accessor output-vars :initform nil :initarg :output-vars)
    (distributions :reader distributions :type hash-table)
    (variables :reader variables :type hash-table)))
 
@@ -262,13 +262,15 @@ VARIABLES is a list of variable definitions."
 					     dist-params)))))
 	    (setf (slot-value model 'distributions) distributions)))
        (defun ,(intern (format nil "MAKE-~A-INSTANCE" (symbol-name class)))
-	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output outputvars)
-	 (make-instance ',class :output output :outputvars outputvars
+	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars)
+	 (make-instance ',class :output output :output-vars output-vars
 			,@(%lambda-list->plist parameters))))))
 
 (defmethod initialize-instance :after ((model generative-model) &key)
-  (let ((variables (make-hash-table))
-	(distributions (make-hash-table)))
+  (dolist (v (output-vars model))
+    (assert (member v (vertices model)) ()
+	    "Output variable ~a is not a variable of ~a." v (type-of model)))
+  (let ((variables (make-hash-table)))
     (loop for v in (vertices model)
 	  for (key formatter hidden) in (slot-value model '%var-specs)
 	  ;;for dist-spec in (slot-value model '%dist-specs)
@@ -390,16 +392,16 @@ VARIABLES is a list of variable definitions."
 
 (defmethod write-header ((m generative-model) &optional (output (output m)))
   (format output "sequence,moment~{,~a~^~},congruent,probability~%" 
-	  (loop for v in (if (null (outputvars m))
+	  (loop for v in (if (null (output-vars m))
 			     (vertices m)
-			     (outputvars m)) collect (string-downcase (symbol-name v)))))
+			     (output-vars m)) collect (string-downcase (symbol-name v)))))
 
 (defmethod write-state ((m generative-model) state congruent probability
 			&optional (output (output m)))
   (format output "~a,~a~{,~a~^~},~a,~a~%" *sequence* *moment*
-	  (loop for v in (if (null (outputvars m))
+	  (loop for v in (if (null (output-vars m))
 			     (vertices m)
-			     (outputvars m)) collect (funcall (formatter-function m v)
+			     (output-vars m)) collect (funcall (formatter-function m v)
 							      (getarg v state)))
 	  congruent probability))
 
