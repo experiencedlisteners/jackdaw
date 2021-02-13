@@ -1,20 +1,59 @@
 (cl:in-package #:jackdaw)
 
-;;;;;;;;;;;;;;;;;;; Probability distributions ;;;;;;;;;;;;;;;;;;;
+(defmacro defdistribution (class superclasses parameters (args symbol) &body body)
+  (let* ((direct-slots (%lambda-list->direct-slots parameters class)))
+    (assert (or (null superclasses)
+		(eq (length (remove-if (lambda (c) (subtypep c 'distribution)) superclasses))
+		    (1- (length superclasses))))
+	    () "At least one superclass of ~a must be of type DISTRIBUTION." class)
+    `(muffle-redefinition-warnings
+       (defclass ,class ,(if (null superclasses) '(distribution) superclasses)
+	 ((%parameter-slots :initform ',(mapcar #'%param-name (remove '&key parameters)))	  
+	  ,@direct-slots))
+       (defmethod probability ((d ,class) arguments ,symbol)
+	 (pr:in (let (,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
+			      collect `(,p (,p d))))
+		  ,(if (listp args)
+		       `(destructuring-bind ,args
+			    arguments
+			  ,@body)
+		       `(let ((,args arguments))
+			 ,@body)))))
+       (defun ,(intern (format nil "MAKE-~A-DISTRIBUTION" (symbol-name class))) ,parameters
+	 (make-instance ',class ,@(%lambda-list->plist parameters))))))
 
 (defclass distribution ()
   ((arguments :initarg :arguments :reader arguments :initform nil)
    (variable :initarg :variable :reader dist-var)))
-(defclass deterministic (distribution) ())
-(defclass bernouilli (distribution)
-  ((p :initarg :p :accessor p
-      :initform (required-arg p bernouilli))
-   (psymbol :initarg :psymbol :accessor psymbol
-	    :initform (required-arg symbol bernouilli))))
-(defclass categorical (distribution)
-  ((category-counts :accessor category-counts :initform (make-hash-table :test #'equal))
-   (p :reader p :initform (make-hash-table :test #'equal))))
-(defclass uniform (distribution) ())
+
+;;;;;;;;;;;;;;;;;;; Probability distributions ;;;;;;;;;;;;;;;;;;;
+
+(defdistribution bernouilli () (p &key (psymbol t)) (args symbol)
+  (let ((p (if (null args) p
+	       (cdr (assoc args p :test #'equal)))))
+    (if (equal symbol psymbol) p
+	(- 1 p))))
+
+(defdistribution uniform () () (() symbol) 1) ;; probabilities are normalized automatically
+
+(defdistribution deterministic () () (() symbol) 1)
+(defmethod probabilities ((d deterministic) parents-state congruent-states)
+  (assert (eq (length congruent-states) 1) ()
+	  "Variable with deterministic distribution must have exactly one congruent state.")
+  (call-next-method))
+
+(defdistribution categorical () (parameters) (args symbol)
+  (multiple-value-bind (p found?)
+      (gethash (cons symbol args) parameters)
+    (unless found?
+      (warn "Categorical probability of ~a given ~a not found." symbol args))
+    p))
+
+(defmethod set-param ((d categorical) arguments symbol probability)
+  "Set probability of distribution parameter. Probabilities must be given not in
+log representation. Caller must ensure probabilities sum to one."
+  (setf (gethash (cons symbol arguments) (p d)) probability))
+
 (defclass accumulator-model (distribution)
   ((alphabet :reader alphabet :initform nil)
    (escape :reader escape :initform :c)
@@ -28,12 +67,11 @@
  sequence model. The overridden fields serve to set some defaults."))
 
 
-(defwriter distribution (m) nil)
-(defreader distribution (m d) (declare (ignorable d)))
-(defwriter bernouilli (m) (list (p m) (psymbol m)))
-(defreader bernouilli (m d)
-  (setf (slot-value m 'p) (first d)
-	(slot-value m 'psymbol) (second d)))
+(defwriter distribution (m)
+	   (loop for s in (%parameter-slots m) collect (slot-value m s)))		 
+(defreader distribution (m data)
+  (loop for v in data for s in (%parameter-slots m)
+	collect (slot-value m s)))
 (defwriter categorical (m) (hash-table->alist (p m)))
 (defreader categorical (m p) (setf (slot-value m 'p) (alist->hash-table p)))
 (defwriter ppm:ppm (m)
@@ -194,32 +232,10 @@ parent variables are instantiated."
       (setf (gethash (cons symbol arguments) (p d))
 	    (pr:in (/ new-s-count new-arg-count))))))
 
-(defmethod probability ((d uniform) arguments symbol) (pr:in 1)) ; is normalised later
-
-(defmethod probability ((d bernouilli) arguments symbol)
-  (let ((p (if (null arguments) (p d)
-	       (cdr (assoc arguments (p d) :test #'equal)))))
-  (pr:in (if (equal symbol (psymbol d)) p
-	     (- 1 p)))))
-
 (defmethod set-param ((d categorical) arguments symbol probability)
   "Set probability of distribution parameter. Probabilities must be given not in
 log representation. Caller must ensure probabilities sum to one."
   (setf (gethash (cons symbol arguments) (p d)) probability))
-
-(defmethod probability ((d categorical) arguments symbol)
-  (multiple-value-bind (p found?)
-      (gethash (cons symbol arguments) (p d))
-    (unless found?
-      (warn "Categorical probability of ~a given ~a not found." symbol arguments))
-    (pr:in p)))
-
-(defmethod probabilities ((d deterministic) parents-state congruent-states)
-  (assert (eq (length congruent-states) 1) ()
-	  "Variable with deterministic distribution must have exactly one congruent state.")
-  (let ((table (make-hash-table :test #'equal)))
-    (setf (gethash (car congruent-states) table) (pr:in 1))
-    table))
 
 (defmethod probabilities ((d distribution) parents-state congruent-states)
   "Obtain the probability of provided CONGRUENT-STATES by the PROBABILITY method.
