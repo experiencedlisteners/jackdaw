@@ -290,11 +290,6 @@ VARIABLES is a list of variable definitions."
   (let ((v (gethash variable (variables m))))
     (output v)))
 
-(defmethod variable-constraint ((m generative-model) variable)
-  "Return the congruency constraint associated with VARIABLE in model M."
-  (let ((v (gethash variable (variables m))))
-    (constraint v)))
-
 (defmethod observed-value ((m generative-model) variable moment)
   "Obtain the observed value of VARIABLE from MOMENT given M."
   (let ((v (gethash variable (variables m))))
