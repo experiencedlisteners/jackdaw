@@ -314,6 +314,8 @@ VARIABLES is a list of variable definitions."
 (defmethod make-observable ((m generative-model) &rest variables)
   "Make VARIABLES observable."
   (dolist (v variables)
+    (when (null (gethash v (variables m)))
+      (warn "~a is not a variable of ~a" v (type-of m)))
     (setf (hidden (gethash v (variables m))) nil)))
 
 (defmethod get-var-distribution ((m generative-model) variable)
