@@ -43,7 +43,8 @@
 
 (defclass generative-model (dag)
   ((%var-specs :allocation :class :type list)
-   (%dist-specs :allocation :class :type list)
+   (%parameter-slots :reader %parameter-slots :allocation :class :type list)
+   ;;(%dist-specs :allocation :class :type list)
    (output :accessor output :initarg :output :initform nil)
    (outputvars :accessor outputvars :initform nil :initarg :outputvars)
    (distributions :reader distributions :type hash-table)
@@ -178,8 +179,12 @@ stem. For example, if S is :^X, (BASENAME S) is :X."
        +singleton+))
 
 (defmacro required-arg (symbol cls)
-  `(error ,(format nil "~a is a required initialization argument of ~a."
-		   (%kw symbol) cls)))
+  (format nil "Slot ~a of ~a should have a value" symbol (type-of cls)))
+  ;;`(error ,(format nil "~a is a required initialization argument of ~a."
+;;		   (%kw symbol) cls)))
+
+(defun %param-name (p)
+  (if (listp p) (car p) p))
   
 (defmacro defmodel (class superclasses parameters variables)
   "Model definition macro
@@ -188,51 +193,74 @@ Create a model class with name CLASS and superclasses SUPERCLASSES.
 PARAMETERS is a lambda list which supports default values and &key 
 arguments but not &optional or (a default a-supplied-p) style parameters.
 VARIABLES is a list of variable definitions."
-  (let ((direct-slots (%lambda-list->direct-slots parameters class))
-	(edges (make-hash-table))
-	(dist-specs) (var-specs) (vertices))
+  (let* ((direct-slots (%lambda-list->direct-slots parameters class))
+	 (edges (make-hash-table))
+	 (dist-specs) (var-specs) (vertices)
+	 (methods))
     (assert (or (null superclasses)
 		(eq (length (remove-if (lambda (c) (subtypep c 'generative-model)) superclasses))
 		    (1- (length superclasses))))
 	    () "At least one superclass of ~a must be of type GENERATIVE-MODEL." class)
+    ;; Initialize dist-specs, var-specs, and vertices, verify model consistency,
+    ;; and define congruency constraint methods.
+    (loop
+      for variable in (reverse variables) ; since we're PUSHing
+      collect
+      (destructuring-bind (v parents distribution constraint
+			   &key (key `(lambda (moment) (getf moment ,(%kw v))))
+			     (formatter '#'identity) (hidden t))
+	  variable
+	(setf (gethash v edges) parents)
+	(push v vertices)
+	(push distribution dist-specs)
+	(push (list key formatter hidden) var-specs)
+	(push 
+	 `(defmethod ,(congruency-function v) ((model ,class) args)
+	    (declare (ignorable model))
+	    (multiple-value-bind (,@(mapcar #'constr-arg parents))
+		(apply #'values args)
+	      (declare (ignorable ,@(mapcar #'constr-arg parents)))
+	      (handler-case
+		  ,(if (member (previous v) parents)
+		       `(let (($^self ,(constr-arg (previous v))))
+			  (declare (ignorable $^self))
+			  ,constraint)
+		       constraint)
+		(error (e)
+		  (warn "Error in a priori congruency constraint of ~A!" ',v)
+		  (error e)))))
+	 methods)))
     `(muffle-redefinition-warnings
-       ;; Initialize dist-specs, var-specs, and vertices, verify model consistency,
-       ;; and define congruency constraint methods.
-       ,@(loop
-	   for variable in (reverse variables) ; since where PUSHing
-	   collect
-	   (destructuring-bind (v parents distribution constraint
-				&key (key `(lambda (m) (getf m ',(%kw v))))
-				  (formatter '#'identity) (hidden t))
-	       variable
-	     (setf (gethash v edges) parents)
-	     (push v vertices)
-	     (push distribution dist-specs)
-	     (push (list key formatter hidden) var-specs)
-	     `(progn
-		(defmethod ,(congruency-function v) ((model ,class) args)
-		  (declare (ignorable model))
-		  (multiple-value-bind (,@(mapcar #'constr-arg parents))
-		      (apply #'values args)
-		    (declare (ignorable ,@(mapcar #'constr-arg parents)))
-		    (handler-case
-			,(if (member (previous v) parents)
-			     `(let (($^self ,(constr-arg (previous v))))
-				(declare (ignorable $^self))
-				,constraint)
-			     constraint)
-		      (error (e)
-			(warn "Error in a priori congruency constraint of ~A!" ',v)
-			(error e))))))))
+       (pushnew (%kw ',class) *models*)
+       (setf (getf *model-parameters* ',class) ',parameters)
        (defclass ,class ,(if (null superclasses) '(generative-model) superclasses)
 	 ((%var-specs :initform ',var-specs)
-	  (%dist-specs :initform ',dist-specs)
+	  (%parameter-slots :initform ',(mapcar #'%param-name (remove '&key parameters)))
+	  ;;(%dist-specs :initform ',dist-specs)
 	  ,@direct-slots))
+       ,@methods
        (defmethod vertices ((m ,class))
 	 ',vertices)
        (defmethod edge-table ((m ,class)) ,edges)
-       (push (%kw ',class) *models*)
-       (setf (getf *model-parameters* (%kw ',class)) ',parameters)
+       (defmethod initialize-instance :after ((model ,class) &key)
+	 (let ((distributions (make-hash-table))
+		,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
+			collect `(,p (,p model))))
+	    ,@(loop for v in vertices
+		    for dist-spec in dist-specs
+		    collect
+		    (destructuring-bind (dist dist-args &rest dist-params) dist-spec
+		      (assert (subsetp dist-args (gethash v edges))
+			      () "Arguments to distribution of ~a must be subset of parents." v)
+		      (assert (subtypep dist 'distribution) ()
+			      "Distribution argument of the variable ~a (~a) must be of type DISTRIBUTION." 
+			      v dist)
+		      `(setf (gethash ',v distributions)
+			     (apply #'make-instance ',dist
+				    ,(append `(list :arguments ',dist-args
+						    :variable ',v)
+					     dist-params)))))
+	    (setf (slot-value model 'distributions) distributions)))
        (defun ,(intern (format nil "MAKE-~A-INSTANCE" (symbol-name class)))
 	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output outputvars)
 	 (make-instance ',class :output output :outputvars outputvars
@@ -243,24 +271,13 @@ VARIABLES is a list of variable definitions."
 	(distributions (make-hash-table)))
     (loop for v in (vertices model)
 	  for (key formatter hidden) in (slot-value model '%var-specs)
-	  for dist-spec in (slot-value model '%dist-specs)
+	  ;;for dist-spec in (slot-value model '%dist-specs)
 	  do
-	     (destructuring-bind (dist dist-args &rest dist-params) dist-spec
-	       (assert (subsetp dist-args (edges model v))
-		       () "Arguments to distribution of ~a must be subset of parents." v)
-	       (assert (subtypep dist 'distribution) ()
-		       "Distribution argument of the variable ~a (~a) must be of type DISTRIBUTION." 
-		       v dist)
-	       (setf (gethash v distributions)
-		     (apply #'make-instance dist
-			    (append (list :arguments dist-args
-					  :variable v)
-				    dist-params)))
-	       (setf (gethash v variables)
-		     (make-instance
-		      'jackdaw::random-variable
-		      :hidden hidden
-		      :name v :key key :output formatter))))
+	     (setf (gethash v variables)
+		   (make-instance
+		    'jackdaw::random-variable
+		    :hidden hidden
+		    :name v :key (eval key) :output (eval formatter))))
     (setf (slot-value model 'variables) variables)))
 
 
@@ -490,19 +507,26 @@ inactive variables have been pruned."
     (loop for param being the hash-key using (hash-value prob) of table do
       (setf (gethash param table) (/ (car prob) evidence)))
     table))
-	    
-  
+
+
 ;; Model serialization
 
 (defwriter generative-model (m)
-    (let ((params))
-      (loop for var being the hash-key using (hash-value dist) of (variables m) do
-	(setf (getf params var) (serialize dist)))
-      params))
-(defreader generative-model (m distributions)
-  (loop for (var dist) on distributions by #'cddr do
-       (with-input-from-string (s (write-to-string dist))
-	 (deserialize (getf (distributions m) var) s))))
+	   (let ((dist-params)
+		 (parameter-slots (loop for s in (%parameter-slots m)
+					collect (slot-value m s))))
+	     (loop for var being the hash-key using (hash-value dist) of (distributions m) do
+	       (setf (getf dist-params var) (serialize dist)))
+	     (list parameter-slots dist-params)))
+(defreader generative-model (m data)
+  (destructuring-bind (parameters dist-params)
+      data
+    (loop for p in parameters
+	  for s in (%parameter-slots m)
+	  do (setf (slot-value m s) p))
+    (loop for (var dist) on dist-params by #'cddr do
+      (with-input-from-string (s (write-to-string dist))
+	(deserialize (gethash var (distributions m)) s)))))
 
 ;; Optimizations:
 ;; Sort vertices after model creation
