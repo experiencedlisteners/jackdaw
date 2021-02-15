@@ -10,6 +10,13 @@
 (defparameter *models* nil) ; list of defined models
 (defparameter *model-parameters* nil) ; plist of parameters per model
 
+;; Settings
+
+(defparameter *generate-a-priori-states* t
+  "When T, only all a-priori congruent states are generated.
+This is useful when we want to calculate things like the entropy of
+the predictive distribution.")
+
 (defun model-exists? (model-symbol-or-name)
   (not (null (find-model model-symbol-or-name))))
 
@@ -92,6 +99,9 @@ CONS the CAR of which is its mark and whose CDR is the a feature index."
 	   (setf (gethash vertex visited) :yes)
 	   (cons vertex result)))))))
 
+(defun hash-table-values (hash-table)
+  (loop for value being the hash-values of hash-table collect value))
+
 ;; Representation of states and variable identifiers
 
 (defun constr-arg (v)
@@ -102,25 +112,6 @@ given :X, return $X"
 
 (defun congruency-function (v)
   (intern (format nil "$~A" (symbol-name v)) :jackdaw))
-
-(defun input-argument (i)
-  "Given an input identifier, return
-its congruency constraint function symbol. For example,
-given :X, return <X"
-  (intern (format nil "<~A" (symbol-name i))))
-
-(defun getarg (key state)
-  "Given a variable identifier, obtain
-its value from a model state."
-  (cond
-    ((hash-table-p state)
-     (multiple-value-bind (v found?)
-	 (gethash key state)
-       ;;(unless found? (warn "~A not found in state or moment." key))
-       v))
-    ((listp state)
-     (getf state (%kw key)))))
-;;(getf state key))
 
 (defun previous (v)
   (intern (format nil "^~A" (symbol-name v))))
@@ -143,7 +134,7 @@ stem. For example, if S is :^X, (BASENAME S) is :X."
      if (not (eq (elt (symbol-name arg) 0) #\^))
      collect arg))
 
-;; Constraint definition macros
+;; Constraint definition utility macros
 
 (defun inactive? (s)
   (eq s +inactive+))
@@ -177,6 +168,8 @@ stem. For example, if S is :^X, (BASENAME S) is :X."
 		   (list ,@(mapcar #'constr-arg dependencies))))
        ,constraint
        +singleton+))
+
+;; Model definition macro
 
 (defmacro required-arg (symbol cls)
   (format nil "Slot ~a of ~a should have a value" symbol (type-of cls)))
@@ -261,7 +254,7 @@ VARIABLES is a list of variable definitions."
 						    :variable ',v)
 					     dist-params)))))
 	    (setf (slot-value model 'distributions) distributions)))
-       (defun ,(intern (format nil "MAKE-~A-INSTANCE" (symbol-name class)))
+       (defun ,(intern (format nil "MAKE-~A-MODEL" (symbol-name class)))
 	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars)
 	 (make-instance ',class :output output :output-vars output-vars
 			,@(%lambda-list->plist parameters))))))
@@ -282,8 +275,7 @@ VARIABLES is a list of variable definitions."
 		    :name v :key (eval key) :output (eval formatter))))
     (setf (slot-value model 'variables) variables)))
 
-
-;; Model mechanics
+;; Jackdaw mechanics
 
 (defmethod formatter-function ((m generative-model) variable)
   "Return the congruency constraint associated with VARIABLE in model M."
@@ -297,9 +289,6 @@ VARIABLES is a list of variable definitions."
 
 (defmethod hidden? ((m generative-model) variable)
   (hidden (gethash variable (variables m))))
-
-(defmethod observed? ((m generative-model) v)
-  (not (hidden? m v)))
 
 (defmethod hide ((m generative-model) &rest variables)
   "Hide VARIABLES."
@@ -316,91 +305,155 @@ VARIABLES is a list of variable definitions."
 (defmethod get-var-distribution ((m generative-model) variable)
   (gethash variable (distributions m)))
 
-(defmethod marginal-params ((m generative-model))
+(defmethod state-variables ((m generative-model))
   (let* ((horizontal-dependencies
 	 (mapcar (lambda (v) (get-horizontal-arguments (edges m v))) (vertices m))))
     (remove-duplicates (apply #'append horizontal-dependencies))))
 
-(defmethod a-posteriori-congruent ((m generative-model) variable parents-state moment state)
-  "Return the a posteriori congruent states of VARIABLE."
-  (if (hidden? m variable) t
-      (equal state (observed-value m variable moment))))
-;;  (let ((constraint (posterior-constraint m variable)))
-;;    (format t "Var: ~A. Constraint: ~A~%" variable constraint)
-;;    (if (not (or (null constraint) (hidden? m variable)))
-;;	(handler-case
-;;	    (funcall constraint m parents-state moment state)
-;;	  (error (e)
-;;	    (warn "Error in a priori congruency constraint of ~A!" variable)
-;;	    (error e)))
-;;	t)))
-
-(defmethod congruent-states ((m generative-model) variable parents-state)
+(defmethod congruent-variable-states ((m generative-model) variable parents-state)
+  "Apply a variable's congruency function to its dependencies to obtain the
+congruent states of the variable."
   (let ((parents (edges m variable)))
     (funcall (congruency-function variable) m
 	     (loop for p in parents collect (gethash p parents-state)))))
 
-(defmethod generate-states ((m generative-model) variables previous-state moment
-			    &optional (final? t))
-  (let* ((root? (null (cdr variables)))
-	 (parent-states (if root? (list previous-state)
-			    (generate-states m (cdr variables) previous-state moment nil)))
+(defmethod observations ((m generative-model) moment)
+  (let ((observations (make-hash-table)))
+    (dolist (v (vertices m) observations)
+      (unless (hidden? m v)
+	(setf (gethash v observations) (observed-value m v moment))))))
+
+(defun get-probability (state distribution)
+  (let ((probability (gethash state distribution)))
+    (when (null probability)
+      (warn "State ~a not found in distribution." state))
+    probability))
+
+(defmethod observed-states (states observations)
+  "Return the subset of STATES that is consistent with OBSERVATIONS."
+  (loop for s in states if (observed? s observations) collect s))
+
+(defmethod observed? (state observations)
+  "Return T if STATE is consistent with OBSERVATIONS."
+  (every #'identity
+	 (maphash (lambda (v obs) (equal obs (gethash v state))) observations)))
+
+(defun make-state (probability &optional old-state)
+  (let ((new-state (if (null old-state) (make-hash-table)
+		       (copy-hash-table old-state))))
+    (setf (gethash :probability new-state) probability)
+    new-state))
+
+(defmethod generate-moment ((m generative-model) marginal observations
+			    &optional (state (make-root-state m))
+			      (variables (get-vertical-arguments (topological-sort m))))
+  (let* ((parent-states (if (null (cdr variables)) (list state)
+			    (generate-moment m marginal observations state (cdr variables))))
 	 (variable (car variables))
+	 (marginalise? (member variable marginal))
 	 (new-states))
-    ;;(warn "Generating ~a.~%" variable)
-    (dolist (parents-state parent-states new-states)
-      (let* ((probability (gethash :probability parents-state))
-	     (congruent-states (congruent-states m variable parents-state))
-	     (distribution (probabilities (get-var-distribution m variable)
-					  parents-state congruent-states))
-	     (parent-congruent? (or root? (gethash :congruent? parents-state))))
-	;;(warn "root? ~s parent congruent? ~s p=~a" root? parent-congruent? probability)
-	(when (eq (length congruent-states) 0)
-	  (warn "~A has no a priori congruent states." variable))
-	(dolist (s congruent-states)
-	  (let ((congruent? (and parent-congruent?
-				 (a-posteriori-congruent m variable parents-state moment s)))
-		(new-state (copy-hash-table parents-state))
-		(s-probability (pr:mul probability (gethash s distribution))))
-	    (setf (gethash variable new-state) s)
-	    (setf (gethash :congruent? new-state) congruent?)
-	    ;;(warn "~a ~a ~a ~a" final? s probability s-probability)
-	    (when final? (write-state m new-state congruent? s-probability))
-	    ;; Incongruent final states should not be returned,
-	    ;; otherwise, do generate them.
-	    (when (or (not final?) congruent?)
-	      (when (null s-probability)
-		(warn "State ~a not found in distribution." s))
-	      (setf (gethash :probability new-state) s-probability)
-	      (push new-state new-states))))))))
+    (format t "~A ~A~%" state parent-states)
+    (multiple-value-bind (value observed?)
+	(gethash variable observations)
+      ;;(warn "Generating ~a.~%" variable)
+      (dolist (parents-state parent-states new-states)
+	(let* ((probability (gethash :probability parents-state))
+	       (a-priori-congruent-states
+		 (congruent-variable-states m variable parents-state))
+	       (congruent-states
+		 (if (and observed?
+			  (not *generate-a-priori-states*)
+			  (member value a-priori-congruent-states))
+		     (list value)
+		     a-priori-congruent-states))
+	       (distribution (probabilities (get-var-distribution m variable)
+					    parents-state congruent-states)))
+	  (when (eq (length congruent-states) 0)
+	    (warn "~A has no a priori congruent states." variable))
+	  (if (not marginalise?)
+	      (push (make-state
+		     (pr:mul probability (apply #'pr:add (hash-table-values distribution)))
+		     parents-state)
+		    new-states)
+	      (dolist (s congruent-states)
+		(let ((new-state (make-state (get-probability s distribution)
+					     parents-state)))
+		  (setf (gethash variable new-state) s)
+		  (push new-state new-states)))))))
+    (print new-states)))
+
+(defun make-marginal-state (probability trace)
+  (let ((state (make-hash-table)))
+    (setf (gethash :probability state) probability)
+    (setf (gethash :trace state) trace)
+    state))
+
+(defun update-marginal-state (marginal-state p)
+  (setf (gethash :probability marginal-state)
+	(pr:add p (gethash :probability marginal-state)))
+  marginal-state)
+
+(defun probability-distribution (states variables)
+  (let ((marginal (make-hash-table :test #'equal)))
+    (dolist (state states marginal)
+      (let* ((key (loop for v in variables collect (gethash v state)))
+	     (marginal-probability (gethash key marginal))
+	     (probability (gethash :probability state)))
+	(setf (gethash key marginal)
+	      (apply #'pr:add
+		     (cons probability (when marginal-probability marginal-probability))))))))
+	
+(defun marginalize (states variables)
+  "Marginalize a list of states wrt. variables and return a new list of states."
+  (let ((marginal (make-hash-table :test #'equal)))
+    (dolist (state states)
+      (let* ((trace (gethash :trace state))
+	     (key (loop for v in variables collect (gethash v state)))
+	     (marginal-state (gethash key marginal))
+	     (probability (gethash :probability state))
+	     (new-state (if (null marginal-state)
+			    (make-marginal-state probability trace)
+			    (update-marginal-state marginal-state probability))))
+	(setf (gethash key marginal) new-state)))
+    (hash-table-values marginal)))
 
 (defmethod rotate-state ((m generative-model) state &key (keep-trace? t))
   "\"Rotate\" a state. In  rotated (a priori) version of a state, every parameter
 :X is renamed :^X and variables of the form :^X in STATE are dropped."
-  (let ((new-state (make-hash-table)))
+  (let ((new-state (make-hash-table))
+	(state-variables (state-variables m)))
     (setf (gethash :probability new-state) (gethash :probability state))
     (when keep-trace?
       (let ((trace (make-hash-table)))
-	(dolist (key (cons :trace (marginal-params m)))
+	(dolist (key (cons :trace state-variables))
 	  (setf (gethash key trace) (gethash key state)))
 	(setf (gethash :trace new-state) trace)))
-    (dolist (variable (marginal-params m) new-state)
+    (dolist (variable state-variables new-state)
       (setf (gethash (previous variable) new-state) (gethash variable state)))))
 
 (defmethod write-header ((m generative-model) &optional (output (output m)))
-  (format output "sequence,moment~{,~a~^~},congruent,probability~%" 
-	  (loop for v in (if (null (output-vars m))
-			     (vertices m)
-			     (output-vars m)) collect (string-downcase (symbol-name v)))))
+  (let* ((output-var-names
+	   (loop for v in (if (null (output-vars m)) (vertices m)
+			      (output-vars m))
+		 collect (string-downcase (symbol-name v))))
+	 (columns (append
+		   '("sequence" "moment")
+		   output-var-names
+		   (when *generate-a-priori-states* '("congruent"))
+		   '("probability"))))
+    (format output "~{~a~^,~}~%" columns)))
 
-(defmethod write-state ((m generative-model) state congruent probability
-			&optional (output (output m)))
+(defmethod write-states ((m generative-model) states observations &optional (output (output m)))
+  (dolist (state states)
+    (write-state m state observations output)))
+
+(defmethod write-state ((m generative-model) state observations &optional (output (output m)))
   (format output "~a,~a~{,~a~^~},~a,~a~%" *sequence* *moment*
 	  (loop for v in (if (null (output-vars m))
 			     (vertices m)
-			     (output-vars m)) collect (funcall (formatter-function m v)
-							      (getarg v state)))
-	  congruent probability))
+			     (output-vars m))
+		collect (funcall (formatter-function m v) (gethash v state)))
+	  (observed? state observations) (gethash :probability state)))
 
 (defun trace-back (state variable &optional trace)
   (let ((new-trace (cons (gethash variable state) trace))
@@ -409,79 +462,86 @@ VARIABLES is a list of variable definitions."
 	new-trace
 	(trace-back previous-state variable new-trace))))
 
-(defmethod root-state ((m generative-model))
-  "The root state. Every root nodes in a Bayesian networks is conditioned
+(defmethod make-root-state ((m generative-model))
+  "Every root node in a Bayesian network is implicitly conditioned
 on this root state."
   (let ((state (make-hash-table)))
     (setf (gethash :probability state) (pr:in 1))
-    (dolist (variable (mapcar #'previous (marginal-params m)) state)
+    (dolist (variable (mapcar #'previous (state-variables m)) state)
       (setf (gethash variable state) +inactive+))))
 
-(defun marginalize (states variables &optional (marginal (make-hash-table :test #'equal)))
-  "Given a list of states, create a hash table representing a marginal distribution."
-  (dolist (state states marginal)
-    (let* ((state-prob (gethash :probability state))
-	   (trace (gethash :trace state))
-	   (key (loop for v in variables collect (gethash v state)))
-	   (marginal-prob (gethash key marginal))
-	   (new-prob (if (null marginal-prob) state-prob
-			 (pr:add state-prob (car marginal-prob)))))
-      (setf (gethash key marginal) (cons new-prob trace)))))
+(defun make-marginal-state (probability trace)
+  (let ((state (make-hash-table)))
+    (setf (gethash :probability state) probability)
+    (setf (gethash :trace state) trace)
+    state))
 
-(defun marginal->states (marginal variables)
-  (let ((states))
-    (maphash (lambda (state-key p)
-	       (let ((state (make-hash-table)))
-		 (setf (gethash :probability state) (car p))
-		 (setf (gethash :trace state) (cdr p))
-		 (loop for v in variables
-		    for s in state-key do
-		      (setf (gethash v state) s))
-		 (push state states)))
-	     marginal)
-    states))
+(defun update-marginal-state (marginal-state p)
+  (setf (gethash :probability marginal-state)
+	(pr:add p (gethash :probability marginal-state)))
+  marginal-state)
 
-(defmethod process-dataset ((m generative-model) dataset &optional (write-header? t))
+(defun probability-distribution (states variables)
+  (let ((marginal (make-hash-table :test #'equal)))
+    (dolist (state states marginal)
+      (let* ((key (loop for v in variables collect (gethash v state)))
+	     (marginal-probability (gethash key marginal))
+	     (probability (gethash :probability state)))
+	(setf (gethash key marginal)
+	      (apply #'pr:add
+		     (cons probability (when marginal-probability marginal-probability))))))))
+	
+(defun marginalize (states variables)
+  "Marginalize a list of states wrt. variables and return a new list of states."
+  (let ((marginal (make-hash-table :test #'equal)))
+    (dolist (state states)
+      (let* ((trace (gethash :trace state))
+	     (key (loop for v in variables collect (gethash v state)))
+	     (marginal-state (gethash key marginal))
+	     (probability (gethash :probability state))
+	     (new-state (if (null marginal-state)
+			    (make-marginal-state probability trace)
+			    (update-marginal-state marginal-state probability))))
+	(setf (gethash key marginal) new-state)))
+    (hash-table-values marginal)))
+
+
+(defmethod generate-dataset ((m generative-model) dataset &optional (write-header? t))
   (let* ((sequence (car dataset))
 	 (*sequence* (car sequence)))
     ;;(warn "~a" (car sequence))
-    (process-sequence m (cdr sequence) write-header?))
+    (generate-sequence m (cdr sequence) write-header?))
   (unless (null (cdr dataset))
-    (process-dataset m (cdr dataset) nil)))
-	 
-(defmethod process-sequence ((m generative-model) moments
+    (generate-dataset m (cdr dataset) nil)))
+	 	 
+(defmethod generate-sequence ((m generative-model) moments
 			     &optional
 			       (write-header? t)
 			       (moment 0)
-			       (congruent-states (list (root-state m))))
+			       (congruent-states (list (make-root-state m))))
   (when write-header? (write-header m))
   (if (null moments)
       (dolist (v (vertices m) congruent-states)
 	(next-sequence (get-var-distribution m v) congruent-states))
       (let* ((*moment* moment)
 	     (new-congruent-states (transition m (car moments) congruent-states)))
-	(process-sequence m (cdr moments) nil (1+ moment) new-congruent-states))))
+	(when (eq (length new-congruent-states) 0)
+	  (warn "Set of a posteriori congruent states is empty at moment
+~a at position #~a in sequence ~a." moment *moment* *sequence*))
+	(generate-sequence m (cdr moments) nil (1+ moment) new-congruent-states))))
 
 (defmethod transition ((m generative-model) moment congruent-states)
-  (let ((marginal (make-hash-table :test #'equal))
-	(marginal-variables (mapcar #'previous (marginal-params m))))
-    (dolist (previous-state congruent-states)
-      (let* ((new-states (model-congruent-states m previous-state moment))
-	     (marginal-states (mapcar (lambda (s) (rotate-state m s)) new-states)))
-	(marginalize marginal-states marginal-variables marginal)))
-    (marginal->states marginal marginal-variables)))
-
-(defmethod model-congruent-states ((m generative-model) previous-state moment)
-  "Call GENERATE-STATES on topologically sorted list of variables, from which
-inactive variables have been pruned."
-  (let ((a-posteriori-congruent-states
-	  (generate-states m (get-vertical-arguments
-			      (topological-sort m)) previous-state
-			      moment)))
-    (when (eq (length a-posteriori-congruent-states) 0)
-      (warn "Set of a posteriori congruent states is empty at moment
-~a at position #~a in sequence ~a." moment *moment* *sequence*))
-    a-posteriori-congruent-states))
+  (let ((observations (observations m moment))
+	(state-variables (state-variables m)))
+    (flet ((generate-moment (state)
+	     (generate-moment m state-variables observations state)))
+      (let ((new-states
+	      (apply #'append (mapcar #'generate-moment congruent-states))))
+	(write-states m new-states observations)
+	(marginalize (if *generate-a-priori-states*
+			 (observed-states new-states observations)
+			 new-states)
+		     state-variables)))))
 
 (defmethod list-congruent-states ((m generative-model) previous-state moment)
   (let ((states (model-congruent-states m previous-state moment)))
@@ -507,7 +567,6 @@ inactive variables have been pruned."
       (setf (gethash param table) (/ (car prob) evidence)))
     table))
 
-
 ;; Model serialization
 
 (defwriter generative-model (m)
@@ -527,8 +586,9 @@ inactive variables have been pruned."
       (with-input-from-string (s (write-to-string dist))
 	(deserialize (gethash var (distributions m)) s)))))
 
+
 ;; Optimizations:
 ;; Sort vertices after model creation
-;; Represents states as vectors of length |VERTICES|
+;; Represents states as vectors of length |VERTICES| and represent variables as indices
 ;; Create ONE hash table that returns for each vertex the index of
 ;; its state in a state-vector
