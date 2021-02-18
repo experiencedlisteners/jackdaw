@@ -352,6 +352,9 @@ VARIABLES is a list of variable definitions."
 			 (warn "State ~a not found in distribution." state))))
     probability))
 
+(defmethod order ((m generative-model))
+  (length (vertices m)))
+
 (defmethod observations ((m generative-model) moment)
   (let ((observations (make-hash-table)))
     (dolist (v (observed-variables m) observations)
@@ -436,16 +439,6 @@ on this root state."
 	(pr:add p (gethash :probability marginal-state)))
   marginal-state)
 
-(defun probability-distribution (states variables)
-  (let ((marginal (make-hash-table :test #'equal)))
-    (dolist (state states marginal)
-      (let* ((key (loop for v in variables collect (gethash v state)))
-	     (marginal-probability (gethash key marginal))
-	     (probability (gethash :probability state)))
-	(setf (gethash key marginal)
-	      (apply #'pr:add
-		     (cons probability (when marginal-probability marginal-probability))))))))
-	
 (defun marginalize (states variables)
   "Marginalize a list of states wrt. variables and return a new list of states."
   (let ((marginal (make-hash-table :test #'equal)))
@@ -462,7 +455,7 @@ on this root state."
 
 (defmethod rotate-state ((m generative-model) state &key (keep-trace? t))
   "\"Rotate\" a state. In  rotated (a priori) version of a state, every parameter
-:X is renamed :^X and variables of the form :^X in STATE are dropped."
+X is renamed ^X and variables of the form ^X in STATE are dropped."
   (let ((new-state (make-hash-table))
 	(persistent-variables (model-variables m)))
     (setf (gethash :probability new-state) (gethash :probability state))
@@ -561,18 +554,22 @@ on this root state."
 	new-trace
 	(trace-back previous-state variable new-trace))))
 
-(defmethod list-congruent-states ((m generative-model) previous-state moment)
-  (let ((states (model-congruent-states m previous-state moment)))
-    (loop for state in states
-	  collect
-	  (append (loop for v in (vertices m) collect (gethash v state))
-		  (list (gethash :probability state))))))
+(defmethod format-hash-table (hash-table)
+  (format nil "(~{~{~A~^:~}~^ ~})"
+	  (loop for k being each hash-key of hash-table
+		collect (list k (gethash k hash-table)))))
 
 (defmethod pprint-state ((m generative-model) state)
+  (format t "(~{~{~A~^:~}~^ ~})"
+	  (loop for k being each hash-key of state
+		collect (list k (gethash k state))))
   (format t "(~{~{~A~^:~}~^ ~}): ~a~%" 
-	  (loop for v in (vertices m)
-		collect (list v (gethash (previous v) state)))
-	  (gethash :probability state)))
+	  (append (loop for v in (vertices m)
+			collect (list v (gethash v state)))
+		  (loop for v in (vertices m)
+			collect (list (previous v) (gethash (previous v) state))))
+	  (gethash :probability state))
+  state)
 
 ;; Optimizations:
 ;; Sort vertices after model creation
