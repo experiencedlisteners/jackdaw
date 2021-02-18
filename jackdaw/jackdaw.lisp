@@ -1,9 +1,9 @@
 (cl:in-package #:jackdaw)
 ;; Special symbols
 
-(defvar +inactive+ '%inactive)
+(defvar +inactive+ '✳)
 (defvar +singleton+ (list +inactive+))
-(defvar +ngram-filler+ '%ngram-filler)
+(defvar +ngram-filler+ '✳)
 
 ;; Globals for enabling meta-programming with models
 
