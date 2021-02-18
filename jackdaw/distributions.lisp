@@ -10,8 +10,10 @@
        (defclass ,class ,(if (null superclasses) '(distribution) superclasses)
 	 ((%parameter-slots :initform ',(mapcar #'%param-name (remove '&key parameters)))	  
 	  ,@direct-slots))
-       (defmethod probability ((d ,class) arguments ,symbol)
-	 (pr:in (let (,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
+       (defmethod probability ((d ,class) observation)
+	 (pr:in (let ((,symbol (car observation))
+		      (arguments (cdr observation))
+		      ,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
 			      collect `(,p (,p d))))
 		  ,(if (listp args)
 		       `(destructuring-bind ,args
@@ -28,7 +30,8 @@
 
 ;;;;;;;;;;;;;;;;;;; Probability distributions ;;;;;;;;;;;;;;;;;;;
 
-(defdistribution bernouilli () (p &key (psymbol t)) (args symbol)
+(defdistribution bernouilli () (p &key (psymbol t))
+    (args symbol)
   (let ((p (if (null args) p
 	       (cdr (assoc args p :test #'equal)))))
     (if (equal symbol psymbol) p
@@ -37,7 +40,8 @@
 (defdistribution uniform () () (() symbol) 1) ;; probabilities are normalized automatically
 
 (defdistribution deterministic () () (() symbol) 1)
-(defmethod probabilities ((d deterministic) parents-state congruent-states)
+(defestimator deterministic data s a nil nil)
+(defmethod probabilities ((d deterministic) parents-state  congruent-states)
   (assert (eq (length congruent-states) 1) ()
 	  "Variable with deterministic distribution must have exactly one congruent state.")
   (call-next-method))
@@ -249,7 +253,7 @@ and avoids a call to GET-DISTRIBUTION when the variable is inactive."
     table))
 
 (defmethod get-distribution ((d distribution) table arguments congruent-states)
-  (let* ((probabilities (mapcar (lambda (s) (probability d arguments s))
+  (let* ((probabilities (mapcar (lambda (s) (probability d (cons s arguments)))
 				congruent-states))
 	 (sum (apply #'pr:add probabilities)))
     (loop for s in congruent-states for p in probabilities do
