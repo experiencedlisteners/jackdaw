@@ -192,6 +192,7 @@ PARAMETERS is a lambda list which supports default values and &key
 arguments but not &optional or (a default a-supplied-p) style parameters.
 VARIABLES is a list of variable definitions."
   (let* ((direct-slots (%lambda-list->direct-slots parameters class))
+	 (parameter-names (mapcar #'%param-name (remove '&key parameters)))
 	 (edges (make-hash-table))
 	 (dist-specs) (var-specs) (vertices)
 	 (methods))
@@ -218,22 +219,25 @@ VARIABLES is a list of variable definitions."
 	    (multiple-value-bind (,@(mapcar #'constr-arg parents))
 		(apply #'values args)
 	      (declare (ignorable ,@(mapcar #'constr-arg parents)))
-	      (handler-case
-		  ,(if (member (previous v) parents)
-		       `(let (($^self ,(constr-arg (previous v))))
-			  (declare (ignorable $^self))
-			  ,constraint)
-		       constraint)
-		(error (e)
-		  (warn "Error in a priori congruency constraint of ~A!" ',v)
-		  (error e)))))
+	      (let (,@(loop for parameter in parameter-names collect
+			    `(,parameter (slot-value model ',parameter)))
+		    ,@(when (member (previous v) parents)
+			`(($^self ,(constr-arg (previous v))))))
+		(declare (ignorable
+			  ,@parameter-names
+			  ,@(when (member (previous v) parents) `($^self))))
+		(handler-case
+		    ,constraint
+		  (error (e)
+		    (warn "Error in a priori congruency constraint of ~A!" ',v)
+		    (error e))))))
 	 methods)))
     `(muffle-redefinition-warnings
        (pushnew (%kw ',class) *models*)
        (setf (getf *model-parameters* ',class) ',parameters)
        (defclass ,class ,(if (null superclasses) '(generative-model) superclasses)
 	 ((%var-specs :initform ',var-specs)
-	  (%parameter-slots :initform ',(mapcar #'%param-name (remove '&key parameters)))
+	  (%parameter-slots :initform ',parameter-names)
 	  ;;(%dist-specs :initform ',dist-specs)
 	  ,@direct-slots))
        ,@methods
@@ -244,6 +248,7 @@ VARIABLES is a list of variable definitions."
 	 (let ((distributions (make-hash-table))
 		,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
 			collect `(,p (,p model))))
+	   (declare (ignorable ,@parameter-names))
 	    ,@(loop for v in vertices
 		    for dist-spec in dist-specs
 		    collect
@@ -260,8 +265,8 @@ VARIABLES is a list of variable definitions."
 					     dist-params)))))
 	    (setf (slot-value model 'distributions) distributions)))
        (defun ,(intern (format nil "MAKE-~A-MODEL" (symbol-name class)))
-	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars)
-	 (make-instance ',class :output output :output-vars output-vars
+	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars observe)
+	 (make-instance ',class :output output :output-vars output-vars :observe observe
 			,@(%lambda-list->plist parameters))))))
 
 (defmethod initialize-instance :after ((model generative-model) &key observe)
