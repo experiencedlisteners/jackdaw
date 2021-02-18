@@ -11,11 +11,10 @@
 with congruency constraints."))
 
 (cl:in-package #:jackdaw)
+
 ;; Special symbols
 
 (defvar +inactive+ '✳)
-(defvar +singleton+ (list +inactive+))
-(defvar +ngram-filler+ '✳)
 
 ;; Globals for enabling meta-programming with models
 
@@ -217,40 +216,8 @@ stem. For example, if S is :^X, (BASENAME S) is :X."
      if (not (horizontal? v))
      collect v))
 
-;; Constraint definition utility macros
-
 (defun inactive? (s)
   (eq s +inactive+))
-
-(defmacro deterministic (congruent-value) `(list ,congruent-value))
-
-(defmacro normal (constraint) constraint)
-
-(defmacro recursive (constraint initialization-constraint)
-  `(if (inactive? $^self) ,initialization-constraint ,constraint))
-
-(defmacro persistent (constraint)
-  `(recursive (list $^self) ,constraint))
-
-(defmacro one-shot (constraint)
-  `(persistent ,constraint))
-
-(defmacro accumulator (constraint &optional initialization-constraint)
-  `(recursive
-    (mapcar (lambda (s) (cons s $^self)) ,constraint)
-    (mapcar #'list ,(or initialization-constraint constraint))))
-
-(defmacro ngram (constraint n &optional initialization-constraint)
-  `(recursive 
-    (mapcar (lambda (s) (cons s (subseq $^self 0 (1- ,n)))) ,constraint)
-    (mapcar (lambda (s)	(cons s (loop repeat (1- ,n) collect +ngram-filler+)))
-	    ,(or initialization-constraint constraint))))
-
-(defmacro chain (constraint dependencies)
-  `(if (not (every (lambda (s) (inactive? s))
-		   (list ,@(mapcar #'constr-arg dependencies))))
-       ,constraint
-       +singleton+))
 
 ;; Model definition macro
 
