@@ -390,8 +390,9 @@ congruent states of the variable."
 on this root state."
   (let ((state (make-hash-table)))
     (setf (gethash :probability state) (pr:in 1))
-    (dolist (variable (mapcar #'previous (state-variables m)) state)
-      (setf (gethash variable state) +inactive+))))
+    (dolist (variable (state-variables m))
+      (setf (gethash variable state) +inactive+))
+    state))
 
 (defun make-state (probability &optional old-state)
   (let ((new-state (if (null old-state) (make-hash-table)
