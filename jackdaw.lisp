@@ -24,7 +24,7 @@ with congruency constraints."))
 
 ;; Settings
 
-(defparameter *generate-a-priori-states* t
+(defparameter *generate-a-priori-states* nil
   "When T, only all a-priori congruent states are generated.
 This is useful when we want to calculate things like the entropy of
 the predictive distribution.")

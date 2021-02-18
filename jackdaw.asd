@@ -13,13 +13,8 @@
   :serial t
   :components
   ((:file "probabilities")
-   (:module jackdaw
-	    :serial t
-            :components 
-            ((:file "package")
-	     (:file "util")
-	     (:file "jackdaw")
-             (:file "distributions")))))
+   (:file "jackdaw")
+   (:file "distributions"))))
 
 (defsystem jackdaw-tests
   :name "jackdaw-tests"
