@@ -518,29 +518,31 @@ distributions can then be used to look up probabilities in a separate function."
 	      (setf (gethash variable new-state) s)
 	      (push new-state new-states))))))))
 
-(defun make-marginal-state (probability trace)
+(defun make-marginal-state (variables values trace)
   (let ((state (make-hash-table)))
-    (setf (gethash :probability state) probability)
     (setf (gethash :trace state) trace)
+    (loop for variable in variables for value in values do
+      (setf (gethash variable state) value))
     state))
 
 (defun update-marginal-state (marginal-state p)
-  (setf (gethash :probability marginal-state)
-	(pr:add p (gethash :probability marginal-state)))
-  marginal-state)
+  (let ((state-p (gethash :probability marginal-state)))
+    (setf (gethash :probability marginal-state)
+	  (apply #'pr:add (cons p (when state-p (list state-p)))))
+    marginal-state))
 
 (defun marginalize (states variables)
   "Marginalize a list of states wrt. variables and return a new list of states."
   (let ((marginal (make-hash-table :test #'equal)))
     (dolist (state states)
       (let* ((trace (gethash :trace state))
-	     (key (loop for v in variables collect (gethash v state)))
-	     (marginal-state (gethash key marginal))
+	     (values (loop for v in variables collect (gethash v state)))
+	     (marginal-state (gethash-or values marginal
+				 (make-marginal-state variables values
+						      trace)))
 	     (probability (gethash :probability state))
-	     (new-state (if (null marginal-state)
-			    (make-marginal-state probability trace)
-			    (update-marginal-state marginal-state probability))))
-	(setf (gethash key marginal) new-state)))
+	     (new-state (update-marginal-state marginal-state probability)))
+	(setf (gethash values marginal) new-state)))
     (hash-table-values marginal)))
 
 (defmethod rotate-state ((m generative-model) state &key (keep-trace? t))
