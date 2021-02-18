@@ -116,7 +116,7 @@ given :X, return $X"
 (defun previous (v)
   (intern (format nil "^~A" (symbol-name v)) (symbol-package v)))
 
-(defun previous? (v)
+(defun horizontal? (v)
   (eq (elt (symbol-name v) 0) #\^))
 
 (defun basename (s)
@@ -124,15 +124,20 @@ given :X, return $X"
 stem. For example, if S is :^X, (BASENAME S) is :X."
   (intern (subseq (symbol-name s) 1) (symbol-package s)))
 
-(defun get-horizontal-arguments (arglist)
-  (loop for arg in arglist
-     if (eq (elt (symbol-name arg) 0) #\^)
-       collect (basename arg)))
+(defmethod horizontal-edges ((m generative-model) vertex)
+  (loop for v in (edges m vertex)
+     if (horizontal? v)
+       collect (basename v)))
 
-(defun get-vertical-arguments (arglist)
-  (loop for arg in arglist
-     if (not (eq (elt (symbol-name arg) 0) #\^))
-     collect arg))
+(defmethod vertical-edges ((m generative-model) vertex)
+  (loop for v in (edges m vertex)
+     if (horizontal? v)
+       collect (basename v)))
+
+(defun get-vertical-arguments (vertices)
+  (loop for v in vertices
+     if (not (horizontal? v))
+     collect v))
 
 ;; Constraint definition utility macros
 
@@ -330,9 +335,10 @@ VARIABLES is a list of variable definitions."
   (gethash variable (distributions m)))
 
 (defmethod state-variables ((m generative-model))
-  (let* ((horizontal-dependencies
-	 (mapcar (lambda (v) (get-horizontal-arguments (edges m v))) (vertices m))))
-    (remove-duplicates (apply #'append horizontal-dependencies))))
+  (reduce #'union (mapcar (lambda (v) (horizontal-edges m v)) (vertices m))))
+
+(defmethod model-variables ((m generative-model))
+  (union (state-variables m) (observed-variables m)))
 
 (defun get-probability (state distribution)
   (let ((probability (gethash state distribution)))
@@ -450,32 +456,35 @@ on this root state."
   "\"Rotate\" a state. In  rotated (a priori) version of a state, every parameter
 :X is renamed :^X and variables of the form :^X in STATE are dropped."
   (let ((new-state (make-hash-table))
-	(state-variables (state-variables m)))
+	(persistent-variables (model-variables m)))
     (setf (gethash :probability new-state) (gethash :probability state))
     (when keep-trace?
       (let ((trace (make-hash-table)))
-	(dolist (key (cons :trace state-variables))
+	(dolist (key (cons :trace persistent-variables))
 	  (setf (gethash key trace) (gethash key state)))
 	(setf (gethash :trace new-state) trace)))
-    (dolist (variable state-variables new-state)
-      (setf (gethash (previous variable) new-state) (gethash variable state)))))
-
-(defmethod transition ((m generative-model) moment congruent-states)
+    (dolist (variable persistent-variables new-state)
+      (setf (gethash (previous variable) new-state)
+	    (gethash variable state)))))
+  
+(defmethod transition ((m generative-model) moment congruent-states &optional keep)
   (let ((observations (observations m moment))
-	(state-variables (state-variables m)))
-    (flet ((rotate-state (state)
-	     (rotate-state m state))
-	   (generate-moment (state)
-	     (let ((states (generate-moment m state-variables observations state)))
-	       (write-states m states observations)
-	       (marginalize states state-variables))))
+	(persistent-variables (union (model-variables m) keep)))
+    (flet ((generate-moment (state)
+	     (let* ((states (generate-moment m observations
+					     (rotate-state m state)))
+		    (congruent-states
+		      (if *generate-a-priori-states*
+			  (observed-states states observations)
+			  states)))
+	       (when (eq (length congruent-states) 0)
+		 (warn "No a posteriori congruent states at moment
+~a at position #~a in sequence ~a." moment *moment* *sequence*))
+	       (write-states m congruent-states observations)
+	       (marginalize congruent-states persistent-variables))))
       (let* ((new-states
-	       (apply #'append (mapcar #'generate-moment congruent-states)))
-	     (rotated-states (mapcar #'rotate-state new-states)))
-	(marginalize (if *generate-a-priori-states*
-			 (observed-states rotated-states observations)
-			 rotated-states)
-		     state-variables)))))
+	       (apply #'append (mapcar #'generate-moment congruent-states))))
+	(marginalize new-states persistent-variables)))))
 
 (defmethod generate-dataset ((m generative-model) dataset &optional (write-header? t))
   (let* ((sequence (car dataset))
