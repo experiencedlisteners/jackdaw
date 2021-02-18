@@ -206,7 +206,9 @@ VARIABLES is a list of variable definitions."
       for variable in (reverse variables) ; since we're PUSHing
       collect
       (destructuring-bind (v parents distribution constraint
-			   &key (key `(lambda (moment) (getf moment ,(%kw v))))
+			   &key (key `(lambda (moment)
+					(getf moment ,(%kw v)
+					      (format nil "~s not found in moment" ',v))))
 			     (formatter '#'identity) (hidden t))
 	  variable
 	(setf (gethash v edges) parents)
