@@ -53,6 +53,8 @@
 
 (defclass distribution ()
   ((arguments :initarg :arguments :reader arguments :initform nil)
+   (variable-symbol :initarg :variable-symbol :reader variable-symbol)
+   (%parameters :initform nil)))
 
 (defmethod estimate ((d distribution) data)
   (error "Distribution of type ~a has no defined estimator." (type-of d)))
@@ -119,10 +121,10 @@
 
 (defclass accumulator-model (distribution)
   ((alphabet :reader alphabet :initform nil)
-   (escape :reader escape :initform :c)
-   (mixtures :reader mixtures :initform t)
-   (update-exclusion :reader update-exclusion :initform nil)
-   (order-bound :reader order-bound :initform nil)
+   (escape :initarg :escape :reader escape :initform :c)
+   (mixtures :initarg :mixtures :reader mixtures :initform t)
+   (update-exclusion :initarg :update-exclusion :reader update-exclusion :initform nil)
+   (order-bound :initarg :order-bound :reader order-bound :initform nil)
    (ppms :reader ppms :initform (make-hash-table :test #'equal))
    (locations :accessor locations :initform (make-hash-table :test #'equal))
    (training? :accessor training? :initarg :training? :initform nil))
@@ -214,7 +216,7 @@ must be a list of length 1 (the CDR of which is NIL)."
 		 (p d))
 	(when (> (abs (- sum 1)) 1.0e-10) ;; Check that sum is approximately one.
 	  (warn "Parameters of ~A sum to ~A, not to approximately 1.0, for context ~A."
-		(dist-var d) sum context))))))
+		(variable-symbol d) sum context))))))
 
 (defmethod initialize-instance :after ((d accumulator-model) &key)
   (loop for p in (arguments d) if (previous? p) do
@@ -234,9 +236,8 @@ model state.")
 
 (defmethod next-sequence ((d accumulator-model) congruent-states)
   (loop for state in congruent-states do
-       (let* ((sequence (getarg (previous (dist-var d)) state))
-	      (arguments (mapcar (lambda (v) (getarg (previous v) state))
-				 (remove (dist-var d) (arguments d))))
+       (let* ((sequence (gethash (variable-symbol d) state))
+	      (arguments (mapcar (lambda (v) (gethash v state)) (arguments d)))
 	      (model (get-model d arguments)))
 	 (update-location d model (cdr sequence) arguments (car sequence))
 	 ;; TODO: Is it safe to model the sentinel multiple times for a single model?
@@ -307,7 +308,7 @@ parent variables are instantiated."
 This is just a wrapper for GET-DISTRIBUTION which grabs arguments from PARENTS-STATE
 and avoids a call to GET-DISTRIBUTION when the variable is inactive."
   (let ((table (make-hash-table :test #'equal))
-	(arguments (mapcar (lambda (v) (getarg v parents-state)) (arguments d))))
+	(arguments (mapcar (lambda (v) (gethash v parents-state)) (arguments d))))
     (if (equal congruent-states (list +inactive+))
 	(setf (gethash +inactive+ table) (pr:in 1))
 	(get-distribution d table arguments congruent-states))
