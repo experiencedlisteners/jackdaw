@@ -399,32 +399,121 @@ on this root state."
 		       (copy-hash-table old-state))))
     (setf (gethash :probability new-state) probability)
     new-state))
+
+(defparameter *estimate?* nil)
+
+(defun format-obs (observation)
+  (format nil "(~{~{~w~^: ~}~^, ~})~%"
+	  (loop for k being each hash-key of observation
+		collect (list k (gethash k observation)))))
+
+(defmethod generate-observations ((m generative-model) dataset)
+  "Generate a PLIST with for each variable a list containing the 
+variable's value in each moment in each sequence. For this to work,
+M must be fully observed in the sense that in any moment,
+each variable has exactly one possible value."
+  (let* ((*estimate?* t)
+	 (*generate-a-priori-states* nil)
+	 (observation-dataset))
+    (dolist (sequence dataset)
+      (let ((state (make-root-state m))
+	    (observation-sequence))
+	(dolist (moment sequence)
+	  (let* ((observation (observations m moment))
+		 (states (generate-moment m observation (rotate-state m state))))
+	    (assert (> (length states) 0) ()
+		    "Could not generate observation ~a of moment ~w" (format-obs observation) moment)
+	    (assert (eq (length states) 1) ()
+		    "Cannot estimate from model that is not fully observed.")
+	    	    (push (loop for v in (vertices m) collect (gethash v (car states)))
+		  observation-sequence)
+	    (setf state (car states))))
+	(push (reverse observation-sequence) observation-dataset)))
+    (reverse observation-dataset)))
+
+(defmethod estimate ((m generative-model) dataset)
+  (warn "generating observations")
+  (let* ((dataset (generate-observations m dataset)))
+    (dotimes (vertex-index (order m) m)
+      (let* ((v (elt (vertices m) vertex-index))
+	     (distribution (get-var-distribution m v))
+	     (root (loop repeat (order m) collect +inactive+))
+	     (arguments
+	       (mapcar (lambda (v)
+			 (position (if (horizontal? v) (basename v) v) (vertices m)))
+		       (arguments distribution)))
+	     (horizontal?
+	      (mapcar (lambda (v) (horizontal? v)) (arguments distribution))))
+	(labels
+	    ((get-variable-observation (previous current)
+	       (mapcar (lambda (i horizontal?) (elt (if horizontal? previous current) i))
+		       (cons vertex-index arguments)
+		       (cons nil horizontal?)))
+	     (get-observation-sequence (sequence)
+	       (loop for (previous current) on (cons root sequence) by #'cdr
+		     repeat (length sequence)
+		     collect (get-variable-observation previous current))))
+	  (warn "converting data to observations of ~a" v)
+	  (let ((dataset (mapcar #'get-observation-sequence dataset)))
+	    (warn "estimating ~a" v)
+	    ;;(print v)
+	    ;;(print dataset)
+	    (estimate distribution dataset)))))))
+
+(defmethod probability ((m generative-model) observation)
+  (evidence m (generate-sequence m observation)))
+	      
+"(defmethod probabilities ((m generative-model) states)
+  (let ((distributions (make-hash-table :test #'equal))
+	(probabilities))
+    (flet ((probability (var val state)
+	     (let ((distribution (get-var-distribution m var))
+		   (arguments (mapcar (lambda (arg) (gethash arg state))
+				      (arguments distribution))))
+	       (multiple-value-bind (distribution found?)
+		   (gethash (cons var arguments) distributions)
+		 (unless found?
+		   (setf (gethash (cons var arguments) distributions)
+			 (probabilities distribution arguments 
+    (dolist (state states)
+      (dolist (v (vertices m))
+	(
+"
 		     
-(defmethod generate-moment ((m generative-model) marginal observations
+(defmethod generate-moment ((m generative-model) observations
 			    &optional (state (make-root-state m))
 			      (variables (get-vertical-arguments (topological-sort m))))
+  "It is possible to separate the generation of states from the generation of probabilities.
+However, that would require generating the distributions while generating states (as below)
+and keeping track of them in a hash table that is returned by generate moment. These
+distributions can then be used to look up probabilities in a separate function."
   (let* ((parent-states (if (null (cdr variables)) (list state)
-			    (generate-moment m marginal observations state (cdr variables))))
+			    (generate-moment m observations state (cdr variables))))
 	 (variable (car variables))
 	 (new-states))
-    (format t "~A ~A~%" state parent-states)
+    ;;(format t "Generating ~a~%" variable)
     (multiple-value-bind (value observed?)
 	(gethash variable observations)
-      ;;(warn "Generating ~a.~%" variable)
       (dolist (parents-state parent-states new-states)
-	(let* ((probability (gethash :probability parents-state))
-	       (a-priori-congruent-states
+	(let* ((a-priori-congruent-states
 		 (congruent-variable-states m variable parents-state))
+	       (constrain-states?
+		 (and observed? (not *generate-a-priori-states*)))
 	       (congruent-states
-		 (if (and observed?
-			  (not *generate-a-priori-states*)
-			  (member value a-priori-congruent-states))
-		     (list value)
+		 (if constrain-states?
+		     (when (member value a-priori-congruent-states)
+		       (list value))
 		     a-priori-congruent-states))
-	       (distribution (probabilities (get-var-distribution m variable)
-					    parents-state congruent-states)))
+	       (probability (unless *estimate?* (gethash :probability parents-state)))
+	       (distribution (unless *estimate?*
+			       (probabilities (get-var-distribution m variable)
+					      parents-state a-priori-congruent-states))))
 	  (dolist (s congruent-states)
-	    (let ((new-state (make-state (pr:mul probability (get-probability s distribution))
+	    ;;(when (eq variable 'letter-observer)
+	    ;;  (format t "~a prob: ~a X ~a = ~a~%" variable probability (get-probability s distribution)
+	;;	      (pr:mul probability (get-probability s distribution))))
+	    (let ((new-state (make-state (unless *estimate?*
+					   (pr:mul probability (get-probability s distribution)))
 					 parents-state)))
 	      (setf (gethash variable new-state) s)
 	      (push new-state new-states))))))))
