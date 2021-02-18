@@ -276,14 +276,12 @@ this means that either "
 	    (update-location d model (cdr context) arguments (car context))))))
 
 (defmethod get-model ((d accumulator-model) arguments)
-  "Obtain a PPM model for the current arguments. If it doesn't exist,
-create one and a corresponding root location for the empty context ()."
+  "Obtain a PPM model for the current arguments."
   (multiple-value-bind (model found?)
       (gethash arguments (ppms d))
-    (if found? model
-	(let ((model (spawn-ppm d)))
-	  (setf (gethash arguments (ppms d)) (spawn-ppm d))
-	  model))))
+    (unless found?
+      (error "No PPM model found for arguments ~a." arguments))
+    model))
 
 (defmethod get-distribution ((d accumulator-model) table arguments congruent-states)
   "Obtain the location object of the appropriate PPM model given context.
