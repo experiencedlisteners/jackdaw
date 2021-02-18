@@ -1,5 +1,17 @@
 (cl:in-package #:jackdaw)
 
+(defun hash-table->alist (hashtab)
+  (let ((alist '()))
+    (maphash #'(lambda (key value) (setq alist (cons (list key value) alist)))
+             hashtab)
+    alist))
+
+(defun alist->hash-table (alist &key (test #'equal))
+  (let ((hashtable (make-hash-table :test test)))
+    (mapc #'(lambda (x) (setf (gethash (car x) hashtable) (cadr x)))
+          alist)
+    hashtable))
+
 (defmacro defdistribution (class superclasses parameters (args symbol) &body body)
   (let* ((direct-slots (%lambda-list->direct-slots parameters class)))
     (assert (or (null superclasses)
