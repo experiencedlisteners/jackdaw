@@ -611,15 +611,19 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
 
 (defmethod evidence ((m generative-model) congruent-states)
   (gethash :probability
-	   (car (marginalize congruent-states nil))))
+	   (car (marginalize congruent-states (observed-variables m)))))
 
-;;(defmethod posterior-distribution ((m generative-model) congruent-states variables)
-;;  (let ((states (marginalize congruent-states (mapcar #'previous variables)))
-;;	(evidence (evidence m congruent-states)))
-;;    (loop for param being the hash-key using (hash-value prob) of table do
-;;      (setf (gethash param table) (/ (car prob) evidence)))
-;;    table))
+(defmethod posterior-distribution ((m generative-model) congruent-states)
+  (let ((evidence (evidence m congruent-states)))
+    (dolist (state congruent-states congruent-states)
+      (setf (gethash :probability state) (pr:div (gethash :probability state) evidence)))))
 
+(defun states->probabilities (states &rest variables)
+  (loop for s in states
+	collect
+	(list (loop for v in variables collect (gethash v s))
+	      (gethash :probability s))))
+			      
 (defmethod write-header ((m generative-model) &optional (output (output m)))
   (let* ((output-var-names
 	   (loop for v in (if (null (output-vars m)) (vertices m)
