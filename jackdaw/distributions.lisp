@@ -219,7 +219,7 @@ must be a list of length 1 (the CDR of which is NIL)."
 		(variable-symbol d) sum context))))))
 
 (defmethod initialize-instance :after ((d accumulator-model) &key)
-  (loop for p in (arguments d) if (previous? p) do
+  (loop for p in (arguments d) if (horizontal? p) do
        (warn "~a has previous-moment arguments which is not supported at the
 moment. See NEXT-SEQUENCE for ACCUMULATOR-MODEL and TRANSITION, which ROTATEs
 states." (type-of d))))
