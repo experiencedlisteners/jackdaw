@@ -24,9 +24,38 @@
        (defun ,(intern (format nil "MAKE-~A-DISTRIBUTION" (symbol-name class))) ,parameters
 	 (make-instance ',class ,@(%lambda-list->plist parameters))))))
 
+(defmacro defestimator (distribution data symbol arguments
+			binding-spec parameter-setters
+			&key dataset-handler sequence-handler observation-handler)
+  (let* ((observation-handler-code
+	   `(dolist (observation sequence)
+	      (let ((,symbol (car observation))
+		    (,arguments (cdr observation)))
+		,@observation-handler)))
+	 (sequence-handler-code
+	   `(dolist (sequence ,data)
+	      ,@(unless (null sequence-handler) (list sequence-handler))
+	      ,@(unless (null observation-handler)
+		 (list observation-handler-code))))
+	 (dataset-handler-code
+	   `(,@(unless (null dataset-handler) (list dataset-handler))
+	     ,@(unless (and (null sequence-handler)
+			   (null observation-handler))
+		(list sequence-handler-code)))))
+    `(defmethod estimate ((d ,distribution) ,data)
+       (let ,binding-spec
+	 ,@(unless (every #'null (list dataset-handler sequence-handler observation-handler))
+	    dataset-handler-code)
+	 ,@(loop for (parameter setter) in parameter-setters collect
+		 `(setf (slot-value d ',parameter)
+			,setter)))
+       d)))
+
 (defclass distribution ()
   ((arguments :initarg :arguments :reader arguments :initform nil)
-   (variable :initarg :variable :reader dist-var)))
+
+(defmethod estimate ((d distribution) data)
+  (error "Distribution of type ~a has no defined estimator." (type-of d)))
 
 ;;;;;;;;;;;;;;;;;;; Probability distributions ;;;;;;;;;;;;;;;;;;;
 
@@ -37,7 +66,21 @@
     (if (equal symbol psymbol) p
 	(- 1 p))))
 
+(defestimator bernouilli data symbol arguments
+    ((symbol (car (car data)))
+     (total-count 0)
+     (count 0))
+    ((p (/ count total-count))
+     (psymbol symbol))
+  :observation-handler
+  ((incf total-count)
+   (when (not (null arguments))
+     (warn "Arguments defined for Bernouilli distribution but these are ignored."))
+   (when (equal symbol symbol)
+     (incf count))))
+
 (defdistribution uniform () () (() symbol) 1) ;; probabilities are normalized automatically
+(defestimator uniform data s a nil nil)
 
 (defdistribution deterministic () () (() symbol) 1)
 (defestimator deterministic data s a nil nil)
@@ -46,17 +89,33 @@
 	  "Variable with deterministic distribution must have exactly one congruent state.")
   (call-next-method))
 
-(defdistribution categorical () (parameters) (args symbol)
+(defdistribution cpt () (cpt) (args symbol)
   (multiple-value-bind (p found?)
-      (gethash (cons symbol args) parameters)
+      (gethash (cons symbol args) cpt)
+    ;;(format t "P~w = ~a~%" (cons symbol args) (gethash (cons symbol args) cpt))
     (unless found?
-      (warn "Categorical probability of ~a given ~a not found." symbol args))
+      (warn "Probability of ~a given ~a not found in conditional probability table." symbol args))
     p))
 
-(defmethod set-param ((d categorical) arguments symbol probability)
-  "Set probability of distribution parameter. Probabilities must be given not in
-log representation. Caller must ensure probabilities sum to one."
-  (setf (gethash (cons symbol arguments) (p d)) probability))
+(defestimator cpt data symbol arguments
+    ((counts (make-hash-table :test 'equal))
+     (context-counts (make-hash-table :test 'equal)))
+    ((cpt
+      (let ((cpt (make-hash-table :test 'equal)))
+	(maphash (lambda (obs count)
+		   (setf (gethash obs cpt)
+			 (/ count (gethash (cdr obs) context-counts))))
+		 counts)
+	cpt)))
+  :observation-handler
+  ((setf (gethash (cons symbol arguments) counts)
+	 (1+ (gethash (cons symbol arguments) counts 0)))
+   (setf (gethash arguments context-counts)
+	 (1+ (gethash arguments context-counts 0)))))
+
+(defmethod estimate ((model ppm::ppm) data)
+  (ppm:model-dataset model data :construct? t :predict? nil)
+  model)
 
 (defclass accumulator-model (distribution)
   ((alphabet :reader alphabet :initform nil)
@@ -70,14 +129,35 @@ log representation. Caller must ensure probabilities sum to one."
   (:documentation "PPM model that's also a jackdaw-native
  sequence model. The overridden fields serve to set some defaults."))
 
+(defestimator accumulator-model data symbol arguments
+  ((ppms (make-hash-table :test #'equal))
+   (datasets (make-hash-table :test #'equal)))
+  ((ppms (progn
+	   (maphash (lambda (context data)
+		      (let ((ppm (spawn-ppm d)))
+			(estimate ppm data)
+			(setf (gethash context ppms) ppm)))
+		    datasets)
+	  ppms)))
+  :sequence-handler
+  (let ((context (cdr (car sequence)))
+	(observation-sequence))
+    (dolist (observation sequence)
+      (when (not (equal (cdr observation) context))
+	(error "Context change within a sequences not allowed for a sequence model."))
+      (push (caar observation) observation-sequence))
+    ;;(print (coerce (reverse observation-sequence) 'string))
+    (when (null	(gethash context datasets))
+      (setf (gethash context datasets) nil))
+    (push (reverse observation-sequence) (gethash context datasets))))
 
 (defwriter distribution (m)
 	   (loop for s in (%parameter-slots m) collect (slot-value m s)))		 
 (defreader distribution (m data)
   (loop for v in data for s in (%parameter-slots m)
 	collect (slot-value m s)))
-(defwriter categorical (m) (hash-table->alist (p m)))
-(defreader categorical (m p) (setf (slot-value m 'p) (alist->hash-table p)))
+(defwriter cpt (m) (hash-table->alist (p m)))
+(defreader cpt (m p) (setf (slot-value m 'p) (alist->hash-table p)))
 (defwriter ppm:ppm (m)
     (list :leaves (utils:hash-table->alist (ppm::ppm-leaves m))
 	  :branches (utils:hash-table->alist (ppm::ppm-branches m))
@@ -117,8 +197,8 @@ log representation. Caller must ensure probabilities sum to one."
 	;; Store a ppm
 	(setf (gethash arguments (ppms d)) model)))))
 
-(defmethod initialize-instance :after ((d categorical) &key parameters)
-  "Parameters must be supplied as an ALIST: a list with items (PARAM . PROB). 
+(defmethod initialize-instance :after ((d cpt) &key parameters)
+  "Parameters can be supplied as an ALIST: a list with items (PARAM . PROB). 
 The context of a parameter is (CDR PROB), and corresponds to a list of states 
 corresponding to variables that D is conditioned on. If D is not conditioned 
 on anything, the context may be set to NIL. This means that each parameter 
@@ -221,25 +301,6 @@ parent variables are instantiated."
 	(cons symbol context)
 	(setf (gethash (cons symbol context) table) probability)))
     table))
-
-(defmethod observe ((d distribution) state symbol training?)
-  "Ignore observations by default.")
-
-(defmethod observe ((d categorical) state symbol training?)
-  (when training?
-    (let* ((arguments (mapcar (lambda (v) (getarg v state)) (arguments d)))
-	   (counts (category-counts d))
-	   (new-arg-count (1+ (gethash arguments counts 0)))
-	   (new-s-count (1+ (gethash (cons symbol arguments) counts 0))))
-      (setf (gethash arguments counts) new-arg-count)
-      (setf (gethash (cons symbol arguments) counts) new-s-count)
-      (setf (gethash (cons symbol arguments) (p d))
-	    (pr:in (/ new-s-count new-arg-count))))))
-
-(defmethod set-param ((d categorical) arguments symbol probability)
-  "Set probability of distribution parameter. Probabilities must be given not in
-log representation. Caller must ensure probabilities sum to one."
-  (setf (gethash (cons symbol arguments) (p d)) probability))
 
 (defmethod probabilities ((d distribution) parents-state congruent-states)
   "Obtain the probability of provided CONGRUENT-STATES by the PROBABILITY method.
