@@ -17,14 +17,14 @@
 This is useful when we want to calculate things like the entropy of
 the predictive distribution.")
 
-(defun model-exists? (model-symbol-or-name)
-  (not (null (find-model model-symbol-or-name))))
+(defun model-exists? (model-symbol-or-name &optional (package :jackdaw))
+  (not (null (find-model model-symbol-or-name package))))
 
-(defun find-model (model-symbol-or-name)
+(defun find-model (model-symbol-or-name &optional (package :jackdaw))
   (let ((symbol (find-symbol (if (stringp model-symbol-or-name)
 				 (string-upcase model-symbol-or-name)
 				 (symbol-name model-symbol-or-name))
-			     :jackdaw)))
+			     package)))
     (when (subtypep symbol 'generative-model)
       symbol)))
 
@@ -114,7 +114,7 @@ given :X, return $X"
   (intern (format nil "$~A" (symbol-name v)) :jackdaw))
 
 (defun previous (v)
-  (intern (format nil "^~A" (symbol-name v))))
+  (intern (format nil "^~A" (symbol-name v)) (symbol-package v)))
 
 (defun previous? (v)
   (eq (elt (symbol-name v) 0) #\^))
@@ -122,7 +122,7 @@ given :X, return $X"
 (defun basename (s)
   "Given an a priori version of a variable name, return its
 stem. For example, if S is :^X, (BASENAME S) is :X."
-  (intern (subseq (symbol-name s) 1) :jackdaw))
+  (intern (subseq (symbol-name s) 1) (symbol-package s)))
 
 (defun get-horizontal-arguments (arglist)
   (loop for arg in arglist
