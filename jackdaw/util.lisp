@@ -68,3 +68,12 @@
 
 (defun %kw (symbol)
   (intern (symbol-name symbol) 'keyword))
+
+
+(defmacro gethash-or (key hash-table &optional (default-form `(error "~a not found in hash table." ,key)))
+  "Like gethash, but default-form is not executed if the key is found.
+By default, the default-form will throw an error if the key is not found."
+  `(multiple-value-bind (value found?)
+       (gethash ,key ,hash-table)
+     (if found? value
+	 ,default-form)))
