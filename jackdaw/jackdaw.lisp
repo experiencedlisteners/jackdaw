@@ -218,8 +218,8 @@ VARIABLES is a list of variable definitions."
 	(push 
 	 `(defmethod ,(congruency-function v) ((model ,class) args)
 	    (declare (ignorable model))
-	    (multiple-value-bind (,@(mapcar #'constr-arg parents))
-		(apply #'values args)
+	    (destructuring-bind (,@(mapcar #'constr-arg parents))
+		args
 	      (declare (ignorable ,@(mapcar #'constr-arg parents)))
 	      (let (,@(loop for parameter in parameter-names collect
 			    `(,parameter (slot-value model ',parameter)))
@@ -263,7 +263,7 @@ VARIABLES is a list of variable definitions."
 		      `(setf (gethash ',v distributions)
 			     (apply #'make-instance ',dist
 				    ,(append `(list :arguments ',dist-args
-						    :variable ',v)
+						    :variable-symbol ',v)
 					     dist-params)))))
 	    (setf (slot-value model 'distributions) distributions)))
        (defun ,(intern (format nil "MAKE-~A-MODEL" (symbol-name class)))
