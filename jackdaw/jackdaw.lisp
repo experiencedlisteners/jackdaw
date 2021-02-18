@@ -588,7 +588,8 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
     (generate-dataset m (cdr dataset) nil)))
 	 	 
 (defmethod generate-sequence ((m generative-model) moments
-			     &optional
+			      &key
+				keep
 			       (write-header? t)
 			       (moment 0)
 			       (congruent-states (list (make-root-state m))))
@@ -597,12 +598,16 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
       (dolist (v (vertices m) congruent-states)
 	(next-sequence (get-var-distribution m v) congruent-states))
       (let* ((*moment* moment)
-	     (new-congruent-states (transition m (car moments) congruent-states)))
-	(when (eq (length new-congruent-states) 0)
-	  (warn "Set of a posteriori congruent states is empty at moment
-~a at position #~a in sequence ~a." moment *moment* *sequence*))
-	(generate-sequence m (cdr moments) nil (1+ moment) new-congruent-states))))
-		     state-variables)))))
+	     (new-congruent-states (transition m (car moments) congruent-states keep)))
+	;;(format t "Evidence ~a, prob first con state: ~a n-cong: ~a~%"
+	;;	(evidence m new-congruent-states)
+	;;	(gethash :probability (car new-congruent-states))
+	;;	(length new-congruent-states))
+	(generate-sequence m (cdr moments)
+			   :keep keep
+			   :write-header? nil
+			   :moment (1+ moment)
+			   :congruent-states new-congruent-states))))
 
 (defmethod evidence ((m generative-model) congruent-states)
   (gethash :probability
