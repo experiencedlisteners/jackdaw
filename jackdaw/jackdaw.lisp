@@ -348,9 +348,8 @@ VARIABLES is a list of variable definitions."
   (union (state-variables m) (observed-variables m)))
 
 (defun get-probability (state distribution)
-  (let ((probability (gethash state distribution)))
-    (when (null probability)
-      (warn "State ~a not found in distribution." state))
+  (let ((probability (gethash-or state distribution
+			 (warn "State ~a not found in distribution." state))))
     probability))
 
 (defmethod observations ((m generative-model) moment)
@@ -374,9 +373,11 @@ VARIABLES is a list of variable definitions."
 (defmethod congruent-variable-states ((m generative-model) variable parents-state)
   "Apply a variable's congruency function to its dependencies to obtain the
 congruent states of the variable."
-  (let* ((parents (edges m variable))
-	 (arguments (loop for p in parents collect (gethash p parents-state)))
-	 (states (funcall (congruency-function variable) arguments)))
+  (let* ((parents (edges m variable))	 
+	 (arguments
+	   (loop for p in parents
+		 collect (gethash-or p parents-state)))
+	 (states (funcall (congruency-function variable) m arguments)))
     (when (eq (length states) 0)
       (warn "~A has no a priori congruent states." variable))
     states))
