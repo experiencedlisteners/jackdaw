@@ -20,3 +20,12 @@
 	     (:file "util")
 	     (:file "jackdaw")
              (:file "distributions")))))
+
+(defsystem jackdaw-tests
+  :name "jackdaw-tests"
+  :version "0.1"
+  :author "Bastiaan van der Weij"
+  :depends-on (jackdaw)
+  :components
+  ((:file "tests.lisp")))
+
