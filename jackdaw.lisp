@@ -27,6 +27,10 @@ with congruency constraints."))
   "When T, only all a-priori congruent states are generated.
 This is useful when we want to calculate things like the entropy of
 the predictive distribution.")
+(defparameter *estimate?* nil
+  "Use to modify the behavior of GENERATE-MOMENT. When T,
+GENERATE-MOMENT will only generate values consistent with observations
+and will not generate probability distributions")
 
 (defun model-exists? (model-symbol-or-name &optional (package :jackdaw))
   (not (null (find-model model-symbol-or-name package))))
@@ -444,8 +448,6 @@ on this root state."
 		       (copy-hash-table old-state))))
     (setf (gethash :probability new-state) probability)
     new-state))
-
-(defparameter *estimate?* nil)
 
 (defun format-obs (observation)
   (format nil "(~{~{~w~^: ~}~^, ~})~%"
