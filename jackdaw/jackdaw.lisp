@@ -60,7 +60,7 @@ the predictive distribution.")
 (defclass random-variable ()
   ((name :initarg :name :reader name)
    (output :initarg :output :reader output)
-   (hidden :initarg :hidden :accessor hidden :initform nil)
+   (hidden :initarg :hidden :accessor hidden :initform t)
    (key :initarg :key :reader key)))
 
 (defclass dag ()
@@ -259,7 +259,7 @@ VARIABLES is a list of variable definitions."
 	 (make-instance ',class :output output :output-vars output-vars
 			,@(%lambda-list->plist parameters))))))
 
-(defmethod initialize-instance :after ((model generative-model) &key)
+(defmethod initialize-instance :after ((model generative-model) &key observe)
   (dolist (v (output-vars model))
     (assert (member v (vertices model)) ()
 	    "Output variable ~a is not a variable of ~a." v (type-of model)))
@@ -273,7 +273,8 @@ VARIABLES is a list of variable definitions."
 		    'jackdaw::random-variable
 		    :hidden hidden
 		    :name v :key (eval key) :output (eval formatter))))
-    (setf (slot-value model 'variables) variables)))
+    (setf (slot-value model 'variables) variables))
+  (apply #'observe (cons model observe)))
 
 ;; Model serialization
 
@@ -304,22 +305,26 @@ VARIABLES is a list of variable definitions."
 (defmethod observed-value ((m generative-model) variable moment)
   "Obtain the observed value of VARIABLE from MOMENT given M."
   (let ((v (gethash variable (variables m))))
+    ;; TODO wrap in handler case and warn about errors
     (funcall (key v) moment)))
 
 (defmethod hidden? ((m generative-model) variable)
   (hidden (gethash variable (variables m))))
 
-(defmethod hide ((m generative-model) &rest variables)
-  "Hide VARIABLES."
-  (dolist (v variables)
-    (setf (hidden (gethash v (variables m))) t)))
+(defmethod %set-hidden ((m generative-model) hidden vertices)
+  (dolist (v vertices)
+    (let ((variable
+	    (gethash-or v (variables m)
+		       (error "~a is not a variable of ~a" v (type-of m)))))
+      (setf (hidden variable) hidden))))
 
-(defmethod make-observable ((m generative-model) &rest variables)
+(defmethod hide ((m generative-model) &rest vertices)
+  "Hide VARIABLES."
+  (%set-hidden m t vertices))
+  
+(defmethod observe ((m generative-model) &rest vertices)
   "Make VARIABLES observable."
-  (dolist (v variables)
-    (when (null (gethash v (variables m)))
-      (warn "~a is not a variable of ~a" v (type-of m)))
-    (setf (hidden (gethash v (variables m))) nil)))
+  (%set-hidden m nil vertices))
 
 (defmethod get-var-distribution ((m generative-model) variable)
   (gethash variable (distributions m)))
@@ -337,9 +342,8 @@ VARIABLES is a list of variable definitions."
 
 (defmethod observations ((m generative-model) moment)
   (let ((observations (make-hash-table)))
-    (dolist (v (vertices m) observations)
-      (unless (hidden? m v)
-	(setf (gethash v observations) (observed-value m v moment))))))
+    (dolist (v (observed-variables m) observations)
+      (setf (gethash v observations) (observed-value m v moment)))))
 
 (defmethod observed-states (states observations)
   "Return the subset of STATES that is consistent with OBSERVATIONS."
@@ -348,7 +352,11 @@ VARIABLES is a list of variable definitions."
 (defmethod observed? (state observations)
   "Return T if STATE is consistent with OBSERVATIONS."
   (every #'identity
-	 (maphash (lambda (v obs) (equal obs (gethash v state))) observations)))
+	 (loop for v being each hash-key of observations
+	       collect (equal (gethash v observations) (gethash-or v state)))))
+
+(defmethod observed-variables ((m generative-model))
+  (remove-if (lambda (v) (hidden? m v)) (vertices m)))
 
 (defmethod congruent-variable-states ((m generative-model) variable parents-state)
   "Apply a variable's congruency function to its dependencies to obtain the
