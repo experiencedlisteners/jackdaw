@@ -1,7 +1,7 @@
 (cl:defpackage #:jackdaw-tests
   (:use #:common-lisp #:jackdaw)
   (:export
-   "TEST-ALL" "TEST")
+   "RUN-ALL" "RUN")
   (:documentation "Unittests for jackdaw."))
 
 (in-package #:jackdaw-tests)
@@ -34,22 +34,39 @@
 		      (symbol-name function)))
 	  :jackdaw-tests))
 
-(defun test-all ()
-  (dolist (test *all-tests*)
-    (format t "Testing ~a... " test)
-    (funcall (test-function-symbol test))
-    (format t "✔~%")))
+(defun add-test (name test)
+  (setf (getf *all-tests* (intern (symbol-name name) :keyword))
+	test))
 
-(defun test (function)
-  (let ((test-function (test-function-symbol function)))
-    (if (member function *all-tests*)
-	(funcall test-function)
-	(error "No test found for ~a" function))))
+(defun find-test (symbol-or-name)
+  (let ((symbol (if (stringp symbol-or-name)
+		    (intern (string-upcase symbol-or-name) :keyword)
+		    (intern (symbol-name symbol-or-name) :keyword))))
+    (if (null (getf *all-tests* symbol))
+	(error "No test called ~a appears to exist" symbol-or-name)
+	(getf *all-tests* symbol))))
+
+(defun run-all ()
+  (loop for (name) on *all-tests* by #'cddr collect 
+    (run name)))
+
+(defun run (test)
+  (format t "Testing ~a " test)
+  (funcall (find-test test))
+  (format t " ✔~%"))
 
 (defmacro deftest (name &body test)
-  (pushnew name *all-tests*)
-  `(defun ,(test-function-symbol name) ()
-     ,@test))
+  `(add-test ',name (lambda () (progn ,@test))))
+    
+(defmacro deftest-with-model (name (model &rest args) &body test)
+  `(deftest ,name
+     (let ((model (make-instance ',model ,@args)))
+       ,@test)))
+
+(defmacro test (test &optional message arguments)
+  `(progn
+     (assert ,test () ,message ,arguments)
+     (format t ".")))
 
 (defun plist->hash-table (plist &key (test #'eql))
   (let ((hash-table (make-hash-table :test test)))
