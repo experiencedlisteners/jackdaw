@@ -90,19 +90,19 @@ attempting to access probabilities." p (type-of d)))))
 	(- 1 p))))
 
 (defestimator bernouilli data symbol arguments
-    ((symbol (car (car data)))
+    ((psymbol (car (car (car data))))
      (total-count 0)
      (count 0))
     ((p (/ count total-count))
-     (psymbol symbol))
+     (psymbol psymbol))
   :observation-handler
   ((incf total-count)
    (when (not (null arguments))
      (warn "Arguments defined for Bernouilli distribution but these are ignored."))
-   (when (equal symbol symbol)
+   (when (equal symbol psymbol)
      (incf count))))
 
-(defdistribution uniform () () (() symbol) 1) ;; probabilities are normalized automatically
+(defdistribution uniform () () (args symbol) 1) ;; probabilities are normalized automatically
 (defestimator uniform data s a nil nil)
 
 (defdistribution deterministic () () (() symbol) 1)
