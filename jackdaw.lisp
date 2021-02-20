@@ -194,9 +194,6 @@ its congruency constraint function symbol. For example,
 given :X, return $X"
   (intern (format nil "$~A" (symbol-name v))))
 
-(defun congruency-function (v)
-  (intern (format nil "$~A" (symbol-name v)) :jackdaw))
-
 (defun previous (v)
   "Return a symbol referring to the previous value of V in states."
   (intern (format nil "^~A" (symbol-name v)) (symbol-package v)))
@@ -279,23 +276,25 @@ VARIABLES is a list of variable definitions."
 	(push distribution dist-specs)
 	(push (list key formatter hidden) var-specs)
 	(push 
-	 `(defmethod ,(congruency-function v) ((model ,class) args)
+	 `(defmethod congruent-values ((model ,class)
+				      (variable (eql ',v))
+				      parent-state)
 	    (declare (ignorable model))
-	    (destructuring-bind (,@(mapcar #'constr-arg parents))
-		args
-	      (declare (ignorable ,@(mapcar #'constr-arg parents)))
-	      (let (,@(loop for parameter in parameter-names collect
-			    `(,parameter (slot-value model ',parameter)))
-		    ,@(when (member (previous v) parents)
-			`(($^self ,(constr-arg (previous v))))))
-		(declare (ignorable
-			  ,@parameter-names
-			  ,@(when (member (previous v) parents) `($^self))))
-		(handler-case
-		    ,constraint
-		  (error (e)
-		    (warn "Error in a priori congruency constraint of ~A!" ',v)
-		    (error e))))))
+	    (let* (,@(loop for p in parents
+			   collect `(,(constr-arg p) (gethash ',p parent-state)))
+		   ,@(loop for parameter in parameter-names collect
+			   `(,parameter (slot-value model ',parameter)))
+		   ,@(when (member (previous v) parents)
+		       `(($^self ,(constr-arg (previous v))))))
+	      (declare (ignorable
+			,@(mapcar #'constr-arg parents)
+			,@parameter-names
+			,@(when (member (previous v) parents) `($^self))))
+	      (handler-case ,constraint
+		(error (e)
+		  (warn
+		   "An error occurred in the a priori congruency constraint of ~A." ',v)
+		  (error e)))))
 	 methods)))
     `(%muffle-redefinition-warnings
        (pushnew (%kw ',class) *models*)
@@ -446,19 +445,14 @@ VARIABLES is a list of variable definitions."
 (defmethod observed-variables ((m bayesian-network))
   (remove-if (lambda (v) (hidden? m v)) (vertices m)))
 
-(defmethod congruent-variable-states ((m generative-model) variable parents-state)
-  "Apply a variable's congruency function to its dependencies to obtain the
-congruent states of the variable."
-  (let* ((parents (edges m variable))	 
-	 (arguments
-	   (loop for p in parents
-		 collect (gethash-or p parents-state)))
-	 (states (funcall (congruency-function variable) m arguments)))
-    (when (eq (length states) 0)
-      (warn "~A has no a priori congruent states." variable))
-    states))
+(defmethod make-root-state ((m bayesian-network))
+  "Every root node in a Bayesian network is implicitly conditioned
+on this root state."
+  (let ((state (make-hash-table)))
+    (setf (gethash :probability state) (pr:in 1))
+    state))
 
-(defmethod make-root-state ((m generative-model))
+(defmethod make-root-state ((m dynamic-bayesian-network))
   "Every root node in a Bayesian network is implicitly conditioned
 on this root state."
   (let ((state (make-hash-table)))
@@ -467,10 +461,11 @@ on this root state."
       (setf (gethash variable state) +inactive+))
     state))
 
-(defun make-state (probability &optional old-state)
-  (let ((new-state (if (null old-state) (make-hash-table)
-		       (copy-hash-table old-state))))
+(defun branch-state (probability variable value &optional origin)
+  (let ((new-state (if (null origin) (make-hash-table)
+		       (copy-hash-table origin))))
     (setf (gethash :probability new-state) probability)
+    (setf (gethash variable new-state) value)
     new-state))
 
 
@@ -533,63 +528,81 @@ each variable has exactly one possible value."
 	    ;;(print dataset)
 	    (estimate distribution dataset)))))))
 
-(defmethod probability ((m generative-model) observation)
-  (evidence m (generate-sequence m observation)))
-	      
-"(defmethod probabilities ((m generative-model) states)
-  (let ((distributions (make-hash-table :test #'equal))
-	(probabilities))
-    (flet ((probability (var val state)
-	     (let ((distribution (get-var-distribution m var))
-		   (arguments (mapcar (lambda (arg) (gethash arg state))
-				      (arguments distribution))))
-	       (multiple-value-bind (distribution found?)
-		   (gethash (cons var arguments) distributions)
-		 (unless found?
-		   (setf (gethash (cons var arguments) distributions)
-			 (probabilities distribution arguments 
-    (dolist (state states)
-      (dolist (v (vertices m))
-	(
-"
+(defmethod probability ((m bayesian-network) observation)
+  (evidence m (generate m observation)))
+
+(defmethod probabilities ((d distribution) parents-state congruent-values)
+  "Obtain the probability of provided CONGRUENT-VALUES by the PROBABILITY method.
+This is just a wrapper for PROBABILITY-DISTRIBUTION which grabs arguments from PARENTS-STATE
+and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
+  (let ((arguments (mapcar (lambda (v) (gethash v parents-state)) (arguments d))))
+    (if (equal congruent-values (list +inactive+))
+	(list (pr:in 1))
+	(probability-distribution d arguments congruent-values))))
+
+(defmethod probability-distribution ((d distribution) arguments congruent-values)
+  (mapcar (lambda (s) (probability d (cons s arguments)))
+	  congruent-values))
+
+(defmethod descr ((m bayesian-network))
+  (format nil "~a model" (symbol-name (type-of m))))
+
+(defmethod descr ((v random-variable))
+  (format nil "variable ~w of ~a" (name v) (descr (model v))))
+
+(defmethod descr ((d distribution))
+  (format nil "~a distribution of variable ~a" (type-of d) (variable-symbol d)))
+
+;;(defmethod generate :before (v obs &optional p)
+;;  (format t "Generating ~a~%" (descr v)))
+
+(defmethod generate ((variable random-variable) observation
+		     &optional (parent-state (make-hash-table)))
+  (let* ((vertex (name variable))
+	 (distribution (distribution variable))
+	 (a-priori-congruent
+	   (congruent-values (model variable) vertex parent-state))
+	 (hidden? (hidden variable))
+	 (parent-probability (gethash :probability parent-state))
+	 (congruent-values
+	   (if (and (not hidden?))
+	       (when (member (gethash-or vertex observation)
+			     a-priori-congruent)
+		 (list (gethash vertex observation)))
+	       a-priori-congruent)))
+    (flet ((normalize (probabilities)
+	     (let ((total-mass (apply #'pr:add probabilities)))
+	       (mapcar (lambda (p) (pr:div p total-mass)) probabilities)))
+	   (branch-state (value &optional probability)
+	     (branch-state (unless (null probability)
+			     (pr:mul probability parent-probability))
+			   vertex value parent-state)))
+      (if *estimate?*
+	  (mapcar #'branch-state congruent-values)
+	  (let* ((probabilities (probabilities distribution parent-state congruent-values))
+		 (probabilities (if hidden? (normalize probabilities)
+				    probabilities)))
+	    (mapcar #'branch-state congruent-values probabilities))))))
+
+(defmethod generate ((m bayesian-network) observation
+		     &optional (parent-state (make-root-state m)))
+  (generate-moment m parent-state observation))
+
+(defmethod generate ((m dynamic-bayesian-network) observation
+		     &optional (parent-state (list (make-root-state m))))
+  (generate-sequence m observation :congruent-states parent-state))
 		     
-(defmethod generate-moment ((m generative-model) observations
-			    &optional (state (make-root-state m))
-			      (variables (get-vertical-arguments (topological-sort m))))
-  "It is possible to separate the generation of states from the generation of probabilities.
-However, that would require generating the distributions while generating states (as below)
-and keeping track of them in a hash table that is returned by generate moment. These
-distributions can then be used to look up probabilities in a separate function."
-  (let* ((parent-states (if (null (cdr variables)) (list state)
-			    (generate-moment m observations state (cdr variables))))
-	 (variable (car variables))
+(defun generate-moment (m observation &optional (parent-state (make-root-state m))
+					(vertices (get-vertical-arguments (topological-sort m))))
+  "Generate the congruent states that can be reached from PARENT-STATE."
+  (let* ((parent-states
+	   (if (null (cdr vertices)) (list parent-state)
+	       (generate-moment m observation parent-state (cdr vertices))))
 	 (new-states))
-    ;;(format t "Generating ~a~%" variable)
-    (multiple-value-bind (value observed?)
-	(gethash variable observations)
-      (dolist (parents-state parent-states new-states)
-	(let* ((a-priori-congruent-states
-		 (congruent-variable-states m variable parents-state))
-	       (constrain-states?
-		 (and observed? (not *generate-a-priori-states*)))
-	       (congruent-states
-		 (if constrain-states?
-		     (when (member value a-priori-congruent-states)
-		       (list value))
-		     a-priori-congruent-states))
-	       (probability (unless *estimate?* (gethash :probability parents-state)))
-	       (distribution (unless *estimate?*
-			       (probabilities (get-var-distribution m variable)
-					      parents-state a-priori-congruent-states))))
-	  (dolist (s congruent-states)
-	    ;;(when (eq variable 'letter-observer)
-	    ;;  (format t "~a prob: ~a X ~a = ~a~%" variable probability (get-probability s distribution)
-	;;	      (pr:mul probability (get-probability s distribution))))
-	    (let ((new-state (make-state (unless *estimate?*
-					   (pr:mul probability (get-probability s distribution)))
-					 parents-state)))
-	      (setf (gethash variable new-state) s)
-	      (push new-state new-states))))))))
+    (dolist (parent-state parent-states new-states)
+      (let ((variable (gethash (car vertices) (variables m))))
+	(dolist (state (generate variable observation parent-state))
+	  (push state new-states))))))
 
 (defun make-marginal-state (variables values trace)
   (let ((state (make-hash-table)))

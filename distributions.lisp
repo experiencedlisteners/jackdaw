@@ -133,7 +133,7 @@
   (ppm:model-dataset model data :construct? t :predict? nil)
   model)
 
-(defclass accumulator-model (distribution)
+(defclass accumulator (distribution)
   ((alphabet :reader alphabet :initform nil)
    (escape :initarg :escape :reader escape :initform :c)
    (mixtures :initarg :mixtures :reader mixtures :initform t)
@@ -296,8 +296,8 @@ this means that either "
     (unless found?
       (error "No PPM model found for arguments ~a." arguments))
     model))
-
-(defmethod get-distribution ((d accumulator-model) table arguments congruent-states)
+	      
+(defmethod probability-distribution ((d accumulator) arguments congruent-values)
   "Obtain the location object of the appropriate PPM model given context.
 Context is obtained by accessing the previous self of the current variable, 
 which if the current variable is an accumulator, must represent the context.
@@ -308,28 +308,5 @@ parent variables are instantiated."
 	 (location (get-location d model context arguments))
 	 (alphabet (mapcar #'car congruent-values)))
     (ppm:set-alphabet model alphabet)
-    (dolist (p (ppm::get-distribution model location))
-      (let ((symbol (car p))
-	    (probability (pr:in (cadr p))))
-	(cons symbol context)
-	(setf (gethash (cons symbol context) table) probability)))
-    table))
-
-(defmethod probabilities ((d distribution) parents-state congruent-states)
-  "Obtain the probability of provided CONGRUENT-STATES by the PROBABILITY method.
-This is just a wrapper for GET-DISTRIBUTION which grabs arguments from PARENTS-STATE
-and avoids a call to GET-DISTRIBUTION when the variable is inactive."
-  (let ((table (make-hash-table :test #'equal))
-	(arguments (mapcar (lambda (v) (gethash v parents-state)) (arguments d))))
-    (if (equal congruent-states (list +inactive+))
-	(setf (gethash +inactive+ table) (pr:in 1))
-	(get-distribution d table arguments congruent-states))
-    table))
-
-(defmethod get-distribution ((d distribution) table arguments congruent-states)
-  (let* ((probabilities (mapcar (lambda (s) (probability d (cons s arguments)))
-				congruent-states))
-	 (sum (apply #'pr:add probabilities)))
-    (loop for s in congruent-states for p in probabilities do
-	 (setf (gethash s table) (pr:div p sum)))
-    table))
+    (mapcar (lambda (item) (pr:in (cadr item)))
+	    (ppm::get-distribution model location))))
