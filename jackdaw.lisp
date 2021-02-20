@@ -1,12 +1,36 @@
 (cl:defpackage #:jackdaw
   (:use #:common-lisp)
   (:export
-   "GENERATIVE-MODEL" "V" "RECURSIVE" "ACCUMULATOR" "NGRAM-ACCUMULATOR"
-   "ONE-SHOT"
-   "DEFMODEL" "TRANSITION" "GENERATE-STATES"
-   "DISTRIBUTION" "BERNOUILLI" "CATEGORICAL" "UNIFORM"
-   "OBSERVE" "PROBABILITY" "PROBABILITIES"
-   "+INACIVE+" "+SINGLETON+")
+   ;; Top-level classes
+   #:distribution #:bayesian-network #:dynamic-bayesian-network
+   ;; Evaluating models
+   #:generate #:generate-sequences #:probability
+   #:probabilities
+   ;; Model properties
+   #:variables #:distributions
+   ;; Variable properties
+   #:name #:distribution
+   ;; Manipulating Bayesian networks
+   #:observe #:hide
+   ;; Manipulating lists of states
+   #:transition #:evidence #:posterior
+   #:states->probabilities #:trace-back
+   #:pprint-state
+   ;; Probability distributions
+   #:bernouilli #:cpt #:accumulator #:uniform
+   ;; Model definition utility macros
+   #:defmodel #:deterministic #:normal
+   #:recursive #:persistent #:one-shot
+   #:accumulate #:ngram #:chain
+   ;; Model serialization utilities
+   #:defreader #:defwriter
+   ;; Metaprogramming
+   #:model-exists? #:find-model
+   ;; Constants
+   #:+inactive+
+   ;; Settings
+   #:*models* #:*estimate?* #:*model-parameters*
+   #:*generate-a-priori-states*)
   (:documentation "A toolkit for defining dynamic Bayesian networks 
 with congruency constraints."))
 
