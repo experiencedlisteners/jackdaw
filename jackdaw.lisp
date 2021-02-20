@@ -24,7 +24,7 @@ with congruency constraints."))
 ;; Settings
 
 (defparameter *generate-a-priori-states* nil
-  "When T, only all a-priori congruent states are generated.
+  "When T, all a-priori congruent states are generated.
 This is useful when we want to calculate things like the entropy of
 the predictive distribution.")
 (defparameter *estimate?* nil
@@ -63,7 +63,7 @@ and will not generate probability distributions")
 
 ;; Utility
 
-(defmacro muffle-redefinition-warnings (&body body)
+(defmacro %muffle-redefinition-warnings (&body body)
   `(locally
        (declare #+sbcl(sb-ext:muffle-conditions sb-kernel:redefinition-warning))
      (handler-bind
@@ -195,14 +195,16 @@ given :X, return $X"
   (intern (format nil "$~A" (symbol-name v)) :jackdaw))
 
 (defun previous (v)
+  "Return a symbol referring to the previous value of V in states."
   (intern (format nil "^~A" (symbol-name v)) (symbol-package v)))
 
 (defun horizontal? (v)
+  "Return true if V is a horizontal dependency."
   (eq (elt (symbol-name v) 0) #\^))
 
 (defun basename (s)
   "Given an a priori version of a variable name, return its
-stem. For example, if S is :^X, (BASENAME S) is :X."
+stem. For example, if S is ^X, (BASENAME S) is X."
   (intern (subseq (symbol-name s) 1) (symbol-package s)))
 
 (defmethod horizontal-edges ((m generative-model) vertex)
@@ -216,16 +218,19 @@ stem. For example, if S is :^X, (BASENAME S) is :X."
        collect (basename v)))
 
 (defun get-vertical-arguments (vertices)
+  "Return those vertices in VERTICES that are
+horizontal dependencies."
   (loop for v in vertices
      if (not (horizontal? v))
      collect v))
 
 (defun inactive? (s)
+  "Return T if the value of S is +INACTIVE+."
   (eq s +inactive+))
 
 ;; Model definition macro
 
-(defmacro required-arg (symbol cls)
+(defmacro %required-arg (symbol cls)
   (format nil "Slot ~a of ~a should have a value" symbol (type-of cls)))
   ;;`(error ,(format nil "~a is a required initialization argument of ~a."
 ;;		   (%kw symbol) cls)))
@@ -283,7 +288,7 @@ VARIABLES is a list of variable definitions."
 		    (warn "Error in a priori congruency constraint of ~A!" ',v)
 		    (error e))))))
 	 methods)))
-    `(muffle-redefinition-warnings
+    `(%muffle-redefinition-warnings
        (pushnew (%kw ',class) *models*)
        (setf (getf *model-parameters* ',class) ',parameters)
        (defclass ,class ,(if (null superclasses) '(generative-model) superclasses)
@@ -409,11 +414,11 @@ VARIABLES is a list of variable definitions."
     (dolist (v (observed-variables m) observations)
       (setf (gethash v observations) (observed-value m v moment)))))
 
-(defmethod observed-states (states observations)
+(defmethod congruent-states (states observations)
   "Return the subset of STATES that is consistent with OBSERVATIONS."
   (loop for s in states if (observed? s observations) collect s))
 
-(defmethod observed? (state observations)
+(defmethod congruent? (state observations)
   "Return T if STATE is consistent with OBSERVATIONS."
   (every #'identity
 	 (loop for v being each hash-key of observations
@@ -617,13 +622,13 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
 		      (if *generate-a-priori-states*
 			  (observed-states states observations)
 			  states)))
-	       (when (eq (length congruent-states) 0)
-		 (warn "No a posteriori congruent states at moment
-~a at position #~a in sequence ~a." moment *moment* *sequence*))
-	       (write-states m congruent-states observations)
+	       (%write-states m congruent-states observation)
 	       (marginalize congruent-states persistent-variables))))
       (let* ((new-states
-	       (apply #'append (mapcar #'generate-moment congruent-states))))
+	       (apply #'append (mapcar #'generate-moment congruent-states))))	
+	(when (eq (length new-states) 0)
+	  (error "No a posteriori congruent states at moment
+~a at position #~a in sequence ~a." moment *moment* *sequence*))
 	(marginalize new-states persistent-variables)))))
 
 (defmethod generate-dataset ((m generative-model) dataset &optional (write-header? t))
@@ -685,7 +690,7 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
 
 (defmethod write-states ((m generative-model) states observations &optional (output (output m)))
   (dolist (state states)
-    (write-state m state observations output)))
+    (%write-state m state observations output)))
 
 (defmethod write-state ((m generative-model) state observations &optional (output (output m)))
   (format output "~a,~a~{,~a~^~},~a,~a~%" *sequence* *moment*
@@ -702,25 +707,9 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
 	new-trace
 	(trace-back previous-state variable new-trace))))
 
-(defmethod format-hash-table (hash-table)
-  (format nil "(~{~{~A~^:~}~^ ~})"
-	  (loop for k being each hash-key of hash-table
-		collect (list k (gethash k hash-table)))))
-
-(defmethod pprint-state ((m generative-model) state)
-  (format t "(~{~{~A~^:~}~^ ~})"
+(defmethod pprint-state ((m bayesian-network) state)
+  (format t "(~{~{~A~^:~}~^ ~}): ~a"
 	  (loop for k being each hash-key of state
-		collect (list k (gethash k state))))
-  (format t "(~{~{~A~^:~}~^ ~}): ~a~%" 
-	  (append (loop for v in (vertices m)
-			collect (list v (gethash v state)))
-		  (loop for v in (vertices m)
-			collect (list (previous v) (gethash (previous v) state))))
-	  (gethash :probability state))
-  state)
-
-;; Optimizations:
-;; Sort vertices after model creation
-;; Represents states as vectors of length |VERTICES| and represent variables as indices
-;; Create ONE hash table that returns for each vertex the index of
-;; its state in a state-vector
+		if (not (eq k :probability))
+		  collect (list k (gethash k state)))
+	  (gethash :probability state)))
