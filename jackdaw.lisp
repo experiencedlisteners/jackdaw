@@ -71,7 +71,7 @@ and will not generate probability distributions")
        (progn ,@body)
       )))
 
-(defun %lambda-list->direct-slots (lambda-list cls)
+(defun %lambda-list->direct-slots (lambda-list)
   (let ((required)
 	(keys)
 	(state 'positional)
@@ -86,8 +86,8 @@ and will not generate probability distributions")
 		   (push (list (car param) (cadr param)) keys)
 		   (push (list param nil) keys))))))
     (dolist (p required)
-      (push `(,p :initarg ,(%kw p) :reader ,p
-		 :initform (required-arg ,p ,cls))
+      (push `(,p :initarg ,(%kw p) :reader ,p)
+		 ;;:initform (%required-arg ,p ,cls))
 	    direct-slots))
     (dolist (pdef keys direct-slots)
       (let ((p (car pdef))
@@ -252,7 +252,7 @@ Create a model class with name CLASS and superclasses SUPERCLASSES.
 PARAMETERS is a lambda list which supports default values and &key 
 arguments but not &optional or (a default a-supplied-p) style parameters.
 VARIABLES is a list of variable definitions."
-  (let* ((direct-slots (%lambda-list->direct-slots parameters class))
+  (let* ((direct-slots (%lambda-list->direct-slots parameters))
 	 (parameter-names (mapcar #'%param-name (remove '&key parameters)))
 	 (edges (make-hash-table))
 	 (dist-specs) (var-specs) (vertices)

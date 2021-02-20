@@ -13,7 +13,7 @@
     hashtable))
 
 (defmacro defdistribution (class superclasses parameters (args symbol) &body body)
-  (let* ((direct-slots (%lambda-list->direct-slots parameters class)))
+  (let* ((direct-slots (%lambda-list->direct-slots parameters)))
     (assert (or (null superclasses)
 		(eq (length (remove-if (lambda (c) (subtypep c 'distribution)) superclasses))
 		    (1- (length superclasses))))
