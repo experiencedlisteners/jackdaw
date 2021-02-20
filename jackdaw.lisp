@@ -55,9 +55,9 @@ and will not generate probability distributions")
      (let ((,data (read stream)))
        ,@body)))
 
-(defmacro defwriter (type (model) data)
+(defmacro defwriter (type (model) &body data)
   `(defmethod serialize ((,model ,type) &optional stream)
-     (let ((data ,data))
+     (let ((data (progn ,@data)))
        (unless (null stream) (write data :stream stream))
        data)))
 
@@ -142,6 +142,8 @@ By default, the default-form will throw an error if the key is not found."
 (defclass random-variable ()
   ((name :initarg :name :reader name)
    (output :initarg :output :reader output)
+   (distribution :initarg :distribution :accessor distribution :type distribution)
+   (model :initarg :model :reader model :type bayesian-network)
    (hidden :initarg :hidden :accessor hidden :initform t)
    (key :initarg :key :reader key)))
 
@@ -306,8 +308,7 @@ VARIABLES is a list of variable definitions."
 	 ',vertices)
        (defmethod edge-table ((m ,class)) ,edges)
        (defmethod initialize-instance :after ((model ,class) &key)
-	 (let ((distributions (make-hash-table))
-		,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
+	 (let (,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
 			collect `(,p (,p model))))
 	   (declare (ignorable ,@parameter-names))
 	    ,@(loop for v in vertices
@@ -319,12 +320,11 @@ VARIABLES is a list of variable definitions."
 		      (assert (subtypep dist 'distribution) ()
 			      "Distribution argument of the variable ~a (~a) must be of type DISTRIBUTION." 
 			      v dist)
-		      `(setf (gethash ',v distributions)
+		      `(setf (distribution (gethash ',v (variables model)))
 			     (apply #'make-instance ',dist
 				    ,(append `(list :arguments ',dist-args
 						    :variable-symbol ',v)
-					     dist-params)))))
-	    (setf (slot-value model 'distributions) distributions)))
+					     dist-params)))))))
        (defun ,(intern (format nil "MAKE-~A-MODEL" (symbol-name class)))
 	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars observe)
 	 (make-instance ',class :output output :output-vars output-vars :observe observe
@@ -342,6 +342,7 @@ VARIABLES is a list of variable definitions."
 	     (setf (gethash v variables)
 		   (make-instance
 		    'jackdaw::random-variable
+		    :model model
 		    :hidden hidden
 		    :name v :key (eval key) :output (eval formatter))))
     (setf (slot-value model 'variables) variables))
@@ -349,22 +350,26 @@ VARIABLES is a list of variable definitions."
 
 ;; Model serialization
 
-(defwriter generative-model (m)
-	   (let ((dist-params)
-		 (parameter-slots (loop for s in (%parameter-slots m)
-					collect (slot-value m s))))
-	     (loop for var being the hash-key using (hash-value dist) of (distributions m) do
-	       (setf (getf dist-params var) (serialize dist)))
-	     (list parameter-slots dist-params)))
-(defreader generative-model (m data)
-  (destructuring-bind (parameters dist-params)
+(defwriter random-variable (v)
+  (serialize (distribution v)))
+(defreader random-variable (v data)
+  (deserialize (distribution v) data))
+(defwriter bayesian-network (m)
+  (let ((variables)
+	(parameter-slots (loop for s in (%parameter-slots m)
+			       collect (slot-value m s))))
+    (loop for vertex being the hash-key using (hash-value variable) of (variables m) do
+      (setf (getf variables variables) (serialize variable)))
+    (list parameter-slots variables)))
+(defreader bayesian-network (m data)
+  (destructuring-bind (parameters variables)
       data
     (loop for p in parameters
 	  for s in (%parameter-slots m)
 	  do (setf (slot-value m s) p))
-    (loop for (var dist) on dist-params by #'cddr do
-      (with-input-from-string (s (write-to-string dist))
-	(deserialize (gethash var (distributions m)) s)))))
+    (loop for (vertex variable) on variables by #'cddr do
+      (with-input-from-string (s (write-to-string variable))
+	(deserialize (gethash vertex (variables m)) s)))))
 
 ;; Jackdaw mechanics
 
@@ -404,8 +409,8 @@ VARIABLES is a list of variable definitions."
   "Make VARIABLES observable."
   (%set-hidden m nil vertices))
 
-(defmethod get-var-distribution ((m generative-model) variable)
-  (gethash variable (distributions m)))
+(defmethod model-variable-distribution ((m bayesian-network) vertex)
+  (distribution (gethash vertex (variables m))))
 
 (defmethod state-variables ((m dynamic-bayesian-network))
   (reduce #'union (mapcar (lambda (v) (horizontal-edges m v)) (vertices m))))
@@ -466,6 +471,7 @@ on this root state."
     (setf (gethash :probability new-state) probability)
     new-state))
 
+
 (defun format-obs (observation)
   (format nil "(~{~{~w~^: ~}~^, ~})~%"
 	  (loop for k being each hash-key of observation
@@ -484,7 +490,8 @@ each variable has exactly one possible value."
 	    (observation-sequence))
 	(dolist (moment sequence)
 	  (let* ((observation (observations m moment))
-		 (states (generate-moment m observation (rotate-state m state))))
+		 (states (generate-moment m observation
+					  (rotate-state m state :keep-trace? nil))))
 	    (assert (> (length states) 0) ()
 		    "Could not generate observation ~a of moment ~w" (format-obs observation) moment)
 	    (assert (eq (length states) 1) ()
@@ -500,7 +507,7 @@ each variable has exactly one possible value."
   (let* ((dataset (generate-values m dataset)))
     (dotimes (vertex-index (order m) m)
       (let* ((v (elt (vertices m) vertex-index))
-	     (distribution (get-var-distribution m v))
+	     (distribution (model-variable-distribution m v))
 	     (root (loop repeat (order m) collect +inactive+))
 	     (arguments
 	       (mapcar (lambda (v)
@@ -647,26 +654,32 @@ values, their probability and the previous trace."
 ~a at position #~a in sequence ~a." moment *moment* *sequence*))
 	(marginalize new-states persistent-variables)))))
 
-(defmethod generate-dataset ((m generative-model) dataset &optional (write-header? t))
+(defmethod generate-sequences ((m dynamic-bayesian-network) dataset &optional (write-header? t))
+  "Process a dataset of sequences. Note that this method assumes each sequence is a CONS 
+the CAR of which is used to identify the sequence. This may be something like an index 
+or a unique-id."
   (let* ((sequence (car dataset))
 	 (*sequence* (car sequence)))
     ;;(warn "~a" (car sequence))
-    (generate-sequence m (cdr sequence) write-header?))
+    (generate-sequence m (cdr sequence) :write-header? write-header?))
   (unless (null (cdr dataset))
-    (generate-dataset m (cdr dataset) nil)))
-	 	 
-(defmethod generate-sequence ((m generative-model) moments
-			      &key
-				keep
-			       (write-header? t)
-			       (moment 0)
-			       (congruent-states (list (make-root-state m))))
-  (when write-header? (write-header m))
+    (generate-sequences m (cdr dataset) nil)))
+
+(defmethod generate-sequence ((m dynamic-bayesian-network) moments
+			  &key keep
+			    (keep-trace? t)
+			    (write-header? t)
+			    (moment 0)
+			    (congruent-states (list (make-root-state m))))
+  "Process a sequence moment by moment and return the states that remained 
+congruent by the end of the sequence."
+  (when write-header? (%write-header m))
   (if (null moments)
       (dolist (v (vertices m) congruent-states)
-	(next-sequence (get-var-distribution m v) congruent-states))
+	(next-sequence (model-variable-distribution m v) congruent-states))
       (let* ((*moment* moment)
-	     (new-congruent-states (transition m (car moments) congruent-states keep)))
+	     (new-congruent-states (transition m (car moments) congruent-states
+					       :keep keep :keep-trace? keep-trace?)))
 	;;(format t "Evidence ~a, prob first con state: ~a n-cong: ~a~%"
 	;;	(evidence m new-congruent-states)
 	;;	(gethash :probability (car new-congruent-states))
