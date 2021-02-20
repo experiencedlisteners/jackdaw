@@ -474,7 +474,26 @@ on this root state."
 	  (loop for k being each hash-key of observation
 		collect (list k (gethash k observation)))))
 
-(defmethod generate-observations ((m generative-model) dataset)
+
+(defmethod generate-all-values ((m dynamic-bayesian-network) sequence
+				&optional (states (list (make-root-state m))))
+  "Generate a PLIST with for each variable a list containing the 
+variable's value in each moment in each sequence. For this to work,
+M must be fully observed in the sense that in any moment,
+each variable has exactly one possible value."
+  (let* ((*estimate?* t)
+	 (*generate-a-priori-states* nil))
+    (unless (null sequence)
+      (let* ((states (transition m (car sequence) states :keep (vertices m)))
+	     (result 
+	       (loop for s in states
+		     collect
+		     (loop for v in (vertices m)
+			   collect
+			   (gethash v s)))))
+	(cons result (generate-all-values m (cdr sequence) states))))))
+
+(defmethod generate-values ((m dynamic-bayesian-network) dataset)
   "Generate a PLIST with for each variable a list containing the 
 variable's value in each moment in each sequence. For this to work,
 M must be fully observed in the sense that in any moment,
