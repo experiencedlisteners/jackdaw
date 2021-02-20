@@ -248,8 +248,9 @@ states." (type-of d))))
 (defmethod spawn-ppm ((d accumulator))
   (make-instance
    'ppm:ppm :escape (escape d) :order-bound (order-bound d)
-   :mixtures (mixtures d) :update-exclusion (update-exclusion d)
-   :alphabet (alphabet d)))
+	    :mixtures (mixtures d) :update-exclusion (update-exclusion d)
+	    :normalise nil ;; since normalization is done by us
+	    :alphabet (alphabet d)))
 
 (defmethod next-sequence ((d distribution) congruent-states)
   "Called after each training sequence. May be used to update
