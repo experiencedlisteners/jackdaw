@@ -40,7 +40,7 @@ and will not generate probability distributions")
 				 (string-upcase model-symbol-or-name)
 				 (symbol-name model-symbol-or-name))
 			     package)))
-    (when (subtypep symbol 'generative-model)
+    (when (subtypep symbol 'bayesian-network)
       symbol)))
 
 ;; Global parameters for CSV output writing.
@@ -129,14 +129,15 @@ By default, the default-form will throw an error if the key is not found."
 
 ;; Objects
 
-(defclass generative-model (dag)
+(defclass bayesian-network (distribution dag)
   ((%var-specs :allocation :class :type list)
    (%parameter-slots :reader %parameter-slots :allocation :class :type list)
-   ;;(%dist-specs :allocation :class :type list)
    (output :accessor output :initarg :output :initform nil)
    (output-vars :accessor output-vars :initform nil :initarg :output-vars)
    (distributions :reader distributions :type hash-table)
    (variables :reader variables :type hash-table)))
+
+(defclass dynamic-bayesian-network (bayesian-network) ())
 
 (defclass random-variable ()
   ((name :initarg :name :reader name)
@@ -207,12 +208,16 @@ given :X, return $X"
 stem. For example, if S is ^X, (BASENAME S) is X."
   (intern (subseq (symbol-name s) 1) (symbol-package s)))
 
-(defmethod horizontal-edges ((m generative-model) vertex)
+(defmethod horizontal-edges ((m dynamic-bayesian-network) vertex)
+  "Return those of dependencies of VERTEX in M that are 
+horizontal dependencies."
   (loop for v in (edges m vertex)
      if (horizontal? v)
        collect (basename v)))
 
-(defmethod vertical-edges ((m generative-model) vertex)
+(defmethod vertical-edges ((m dynamic-bayesian-network) vertex)
+  "Return those dependencies of VERTEX in M that are 
+not horizontal."
   (loop for v in (edges m vertex)
      if (horizontal? v)
        collect (basename v)))
@@ -251,9 +256,9 @@ VARIABLES is a list of variable definitions."
 	 (dist-specs) (var-specs) (vertices)
 	 (methods))
     (assert (or (null superclasses)
-		(eq (length (remove-if (lambda (c) (subtypep c 'generative-model)) superclasses))
+		(eq (length (remove-if (lambda (c) (subtypep c 'jackdaw:bayesian-network)) superclasses))
 		    (1- (length superclasses))))
-	    () "At least one superclass of ~a must be of type GENERATIVE-MODEL." class)
+	    () "At least one superclass of ~a must be of type BAYESIAN-NETWORK." class)
     ;; Initialize dist-specs, var-specs, and vertices, verify model consistency,
     ;; and define congruency constraint methods.
     (loop
@@ -291,7 +296,7 @@ VARIABLES is a list of variable definitions."
     `(%muffle-redefinition-warnings
        (pushnew (%kw ',class) *models*)
        (setf (getf *model-parameters* ',class) ',parameters)
-       (defclass ,class ,(if (null superclasses) '(generative-model) superclasses)
+       (defclass ,class ,(if (null superclasses) '(bayesian-network) superclasses)
 	 ((%var-specs :initform ',var-specs)
 	  (%parameter-slots :initform ',parameter-names)
 	  ;;(%dist-specs :initform ',dist-specs)
@@ -325,7 +330,7 @@ VARIABLES is a list of variable definitions."
 	 (make-instance ',class :output output :output-vars output-vars :observe observe
 			,@(%lambda-list->plist parameters))))))
 
-(defmethod initialize-instance :after ((model generative-model) &key observe)
+(defmethod initialize-instance :after ((model bayesian-network) &key observe)
   (dolist (v (output-vars model))
     (assert (member v (vertices model)) ()
 	    "Output variable ~a is not a variable of ~a." v (type-of model)))
@@ -363,42 +368,49 @@ VARIABLES is a list of variable definitions."
 
 ;; Jackdaw mechanics
 
-(defmethod formatter-function ((m generative-model) variable)
+(defmethod formatter-function ((m bayesian-network) variable)
   "Return the congruency constraint associated with VARIABLE in model M."
   (let ((v (gethash variable (variables m))))
     (output v)))
 
-(defmethod observed-value ((m generative-model) variable moment)
+(defmethod observed-value ((m bayesian-network) variable moment)
   "Obtain the observed value of VARIABLE from MOMENT given M."
   (let ((v (gethash variable (variables m))))
-    ;; TODO wrap in handler case and warn about errors
-    (funcall (key v) moment)))
+    (handler-case
+	(funcall (key v) moment)
+      (error (e)
+	(warn "An error occurred in the observation function of ~a"
+	      variable)
+	(error e)))))
 
-(defmethod hidden? ((m generative-model) variable)
+(defmethod hidden? ((m bayesian-network) variable)
   (hidden (gethash variable (variables m))))
 
-(defmethod %set-hidden ((m generative-model) hidden vertices)
+(defmethod observed? ((m bayesian-network) variable)
+  (not (hidden (gethash variable (variables m)))))
+
+(defmethod %set-hidden ((m bayesian-network) hidden vertices)
   (dolist (v vertices)
     (let ((variable
 	    (gethash-or v (variables m)
 		       (error "~a is not a variable of ~a" v (type-of m)))))
       (setf (hidden variable) hidden))))
 
-(defmethod hide ((m generative-model) &rest vertices)
+(defmethod hide ((m bayesian-network) &rest vertices)
   "Hide VARIABLES."
   (%set-hidden m t vertices))
   
-(defmethod observe ((m generative-model) &rest vertices)
+(defmethod observe ((m bayesian-network) &rest vertices)
   "Make VARIABLES observable."
   (%set-hidden m nil vertices))
 
 (defmethod get-var-distribution ((m generative-model) variable)
   (gethash variable (distributions m)))
 
-(defmethod state-variables ((m generative-model))
+(defmethod state-variables ((m dynamic-bayesian-network))
   (reduce #'union (mapcar (lambda (v) (horizontal-edges m v)) (vertices m))))
 
-(defmethod model-variables ((m generative-model))
+(defmethod model-variables ((m dynamic-bayesian-network))
   (union (state-variables m) (observed-variables m)))
 
 (defun get-probability (state distribution)
@@ -406,10 +418,10 @@ VARIABLES is a list of variable definitions."
 			 (warn "State ~a not found in distribution." state))))
     probability))
 
-(defmethod order ((m generative-model))
+(defmethod order ((m bayesian-network))
   (length (vertices m)))
 
-(defmethod observations ((m generative-model) moment)
+(defmethod observations ((m bayesian-network) moment)
   (let ((observations (make-hash-table)))
     (dolist (v (observed-variables m) observations)
       (setf (gethash v observations) (observed-value m v moment)))))
@@ -424,7 +436,7 @@ VARIABLES is a list of variable definitions."
 	 (loop for v being each hash-key of observations
 	       collect (equal (gethash v observations) (gethash-or v state)))))
 
-(defmethod observed-variables ((m generative-model))
+(defmethod observed-variables ((m bayesian-network))
   (remove-if (lambda (v) (hidden? m v)) (vertices m)))
 
 (defmethod congruent-variable-states ((m generative-model) variable parents-state)
@@ -483,9 +495,9 @@ each variable has exactly one possible value."
 	(push (reverse observation-sequence) observation-dataset)))
     (reverse observation-dataset)))
 
-(defmethod estimate ((m generative-model) dataset)
+(defmethod estimate ((m dynamic-bayesian-network) dataset)
   (warn "generating observations")
-  (let* ((dataset (generate-observations m dataset)))
+  (let* ((dataset (generate-values m dataset)))
     (dotimes (vertex-index (order m) m)
       (let* ((v (elt (vertices m) vertex-index))
 	     (distribution (get-var-distribution m v))
@@ -597,9 +609,11 @@ distributions can then be used to look up probabilities in a separate function."
 	(setf (gethash values marginal) new-state)))
     (hash-table-values marginal)))
 
-(defmethod rotate-state ((m generative-model) state &key (keep-trace? t))
+(defmethod rotate-state ((m dynamic-bayesian-network) state &key (keep-trace? t))
   "\"Rotate\" a state. In  rotated (a priori) version of a state, every parameter
-X is renamed ^X and variables of the form ^X in STATE are dropped."
+X is renamed ^X and variables of the form ^X in STATE are dropped.
+Optionally, a trace can be kept which stores a hash table containing the dropped
+values, their probability and the previous trace."
   (let ((new-state (make-hash-table))
 	(persistent-variables (model-variables m)))
     (setf (gethash :probability new-state) (gethash :probability state))
@@ -612,15 +626,17 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
       (setf (gethash (previous variable) new-state)
 	    (gethash variable state)))))
   
-(defmethod transition ((m generative-model) moment congruent-states &optional keep)
-  (let ((observations (observations m moment))
+(defmethod transition ((m dynamic-bayesian-network) moment congruent-states
+		       &key keep (keep-trace? t))
+  (let ((observation (observations m moment))
 	(persistent-variables (union (model-variables m) keep)))
     (flet ((generate-moment (state)
-	     (let* ((states (generate-moment m observations
-					     (rotate-state m state)))
+	     (let* ((states
+		      (generate-moment m observation
+				       (rotate-state m state :keep-trace? keep-trace?)))
 		    (congruent-states
 		      (if *generate-a-priori-states*
-			  (observed-states states observations)
+			  (congruent-states states observation)
 			  states)))
 	       (%write-states m congruent-states observation)
 	       (marginalize congruent-states persistent-variables))))
@@ -661,11 +677,11 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
 			   :moment (1+ moment)
 			   :congruent-states new-congruent-states))))
 
-(defmethod evidence ((m generative-model) congruent-states)
+(defmethod evidence ((m bayesian-network) congruent-states)
   (gethash :probability
 	   (car (marginalize congruent-states (observed-variables m)))))
 
-(defmethod posterior-distribution ((m generative-model) congruent-states)
+(defmethod posterior-distribution ((m bayesian-network) congruent-states)
   (let ((evidence (evidence m congruent-states)))
     (dolist (state congruent-states congruent-states)
       (setf (gethash :probability state) (pr:div (gethash :probability state) evidence)))))
@@ -676,7 +692,7 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
 	(list (loop for v in variables collect (gethash v s))
 	      (gethash :probability s))))
 			      
-(defmethod write-header ((m generative-model) &optional (output (output m)))
+(defmethod %write-header ((m bayesian-network) &optional (output (output m)))
   (let* ((output-var-names
 	   (loop for v in (if (null (output-vars m)) (vertices m)
 			      (output-vars m))
@@ -688,17 +704,17 @@ X is renamed ^X and variables of the form ^X in STATE are dropped."
 		   '("probability"))))
     (format output "~{~a~^,~}~%" columns)))
 
-(defmethod write-states ((m generative-model) states observations &optional (output (output m)))
+(defmethod %write-states ((m bayesian-network) states observations &optional (output (output m)))
   (dolist (state states)
     (%write-state m state observations output)))
 
-(defmethod write-state ((m generative-model) state observations &optional (output (output m)))
+(defmethod %write-state ((m bayesian-network) state observations &optional (output (output m)))
   (format output "~a,~a~{,~a~^~},~a,~a~%" *sequence* *moment*
 	  (loop for v in (if (null (output-vars m))
 			     (vertices m)
 			     (output-vars m))
 		collect (funcall (formatter-function m v) (gethash v state)))
-	  (observed? state observations) (gethash :probability state)))
+	  (congruent? state observations) (gethash :probability state)))
 
 (defun trace-back (state variable &optional trace)
   (let ((new-trace (cons (gethash variable state) trace))
