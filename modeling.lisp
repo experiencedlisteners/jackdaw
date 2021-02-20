@@ -12,13 +12,13 @@
 (defmacro recursive (constraint initialization-constraint)
   `(if (inactive? $^self) ,initialization-constraint ,constraint))
 
-(defmacro persistent (constraint)
+(defmacro persist (constraint)
   `(recursive (list $^self) ,constraint))
 
 (defmacro one-shot (constraint)
-  `(persistent ,constraint))
-
-(defmacro accumulator (constraint &optional initialization-constraint)
+  `(persist ,constraint))
+ 
+(defmacro accumulate (constraint &optional initialization-constraint)
   `(recursive
     (mapcar (lambda (s) (cons s $^self)) ,constraint)
     (mapcar #'list ,(or initialization-constraint constraint))))
