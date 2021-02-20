@@ -14,7 +14,7 @@
   :components
   ((:file "probabilities")
    (:file "jackdaw")
-   (:file "distributions"))))
+   (:file "distributions")))
 
 (defsystem jackdaw-tests
   :name "jackdaw-tests"
@@ -22,5 +22,5 @@
   :author "Bastiaan van der Weij"
   :depends-on (jackdaw)
   :components
-  ((:file "tests.lisp")))
+  ((:file "tests")))
 
