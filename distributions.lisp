@@ -70,6 +70,13 @@
    (variable-symbol :initarg :variable-symbol :reader variable-symbol)
    (%parameters :initform nil)))
 
+(defmethod probability :before ((d distribution) observation)
+  (dolist (p (slot-value d '%parameters))
+    (unless (slot-boundp d p)
+      (error "Distribution parameter ~a of ~a not initialized. You
+must either estimate the model or provide the parameters manually before
+attempting to access probabilities." p (type-of d)))))
+
 (defmethod estimate ((d distribution) data)
   (error "Distribution of type ~a has no defined estimator." (type-of d)))
 
