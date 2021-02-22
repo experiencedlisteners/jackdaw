@@ -140,19 +140,18 @@ attempting to access probabilities." p (type-of d)))))
   (ppm:model-dataset model data :construct? t :predict? nil)
   model)
 
-(defclass accumulator (distribution)
+(defclass ppms (distribution)
   ((alphabet :reader alphabet :initform nil)
    (escape :initarg :escape :reader escape :initform :c)
    (mixtures :initarg :mixtures :reader mixtures :initform t)
    (update-exclusion :initarg :update-exclusion :reader update-exclusion :initform nil)
    (order-bound :initarg :order-bound :reader order-bound :initform nil)
    (ppms :reader ppms :initform (make-hash-table :test #'equal))
-   (locations :accessor locations :initform (make-hash-table :test #'equal))
-   (training? :accessor training? :initarg :training? :initform nil))
-  (:documentation "PPM model that's also a jackdaw-native
- sequence model. The overridden fields serve to set some defaults."))
+   (locations :accessor locations :initform (make-hash-table :test #'equal)))
+  (:documentation "A set of PPM models that can be conditioned on other variables.
+Which PPM model is used depends on the values of the variables conditioned on."))
 
-(defestimator accumulator data symbol arguments
+(defestimator ppms data symbol arguments
   ((ppms (make-hash-table :test #'equal))
    (datasets (make-hash-table :test #'equal)))
   ((ppms (progn
@@ -208,10 +207,10 @@ attempting to access probabilities." p (type-of d)))))
 	(slot-value m 'ppm::update-exclusion)
 	(getf data :update-exclusion))
     (ppm::initialize m))
-(defwriter accumulator (d)
+(defwriter ppms (d)
     (loop for arguments being the hash-keys of (ppms d) collect
 	 (cons arguments (serialize (gethash arguments (ppms d))))))
-(defreader accumulator (d data)
+(defreader ppms (d data)
   (dolist (pair data) ;; Pair structure: (cons arguments serialized-ppm)
     (with-input-from-string (s (write-to-string (cdr pair)))
       (let ((model (make-instance 'ppm:ppm))
@@ -239,13 +238,13 @@ must be a list of length 1 (the CDR of which is NIL)."
 	  (warn "Parameters of ~A sum to ~A, not to approximately 1.0, for context ~A."
 		(variable-symbol d) sum context))))))
 
-(defmethod initialize-instance :after ((d accumulator) &key)
+(defmethod initialize-instance :after ((d ppms) &key)
   (loop for p in (arguments d) if (horizontal? p) do
        (warn "~a has previous-moment arguments which is not supported at the
-moment. See NEXT-SEQUENCE for ACCUMULATOR and TRANSITION, which ROTATEs
+moment. See NEXT-SEQUENCE for PPMS and TRANSITION, which ROTATEs
 states." (type-of d))))
 
-(defmethod spawn-ppm ((d accumulator))
+(defmethod spawn-ppm ((d ppms))
   (make-instance
    'ppm:ppm :escape (escape d) :order-bound (order-bound d)
 	    :mixtures (mixtures d) :update-exclusion (update-exclusion d)
@@ -256,7 +255,7 @@ states." (type-of d))))
   "Called after each training sequence. May be used to update
 model state.")
 
-(defmethod next-sequence ((d accumulator) congruent-states)
+(defmethod next-sequence ((d ppms) congruent-states)
   (loop for state in congruent-states do
        (let* ((sequence (gethash (variable-symbol d) state))
 	      (arguments (mapcar (lambda (v) (gethash v state)) (arguments d)))
@@ -267,10 +266,10 @@ model state.")
   (setf (locations d) (make-hash-table :test #'equal)) ; wipe out locations table
   (loop for k being the hash-keys of (ppms d) do
        (let ((model (gethash k (ppms d))))
-	 (when (training? d) (ppm:initialise-virtual-nodes model))
+	 ;;(when (training? d) (ppm:initialise-virtual-nodes model))
 	 (ppm:increment-sequence-front model))))
 
-(defmethod update-location ((d accumulator) (model ppm:ppm) context arguments symbol)
+(defmethod update-location ((d ppms) (model ppm:ppm) context arguments symbol)
   "Find the location associated with CONTEXT and ARGUMENTS (stored 
 at (CONS CONTEXT ARGUMENTS)) and update it with SYMBOL. 
 Store result at (CONS (CONS SYMBOL CONTEXT) ARGUMENTS)"
@@ -278,16 +277,16 @@ Store result at (CONS (CONS SYMBOL CONTEXT) ARGUMENTS)"
   (ppm::add-event-to-model-dataset model symbol)
   (let* ((previous-location (gethash (cons context arguments) (locations d)
 				     (ppm:get-root)))
-	 (location (ppm::ukkstep model nil previous-location symbol (training? d))))
-    (when (training? d)
+	 (location (ppm::ukkstep model nil previous-location symbol nil))) ;;(training? d))))
+    ;;(when (training? d)
       ;;(warn "Updating model with ~a given context ~a" symbol context)
-      (ppm::increment-counts model location))
+    ;;  (ppm::increment-counts model location))
     (unless (eq symbol ppm::*sentinel*)
       (ppm:increment-event-front model))
     (setf (gethash (cons (cons symbol context) arguments) (locations d)) location)))
 
 
-(defmethod get-location ((d accumulator) (model ppm:ppm) context arguments)
+(defmethod get-location ((d ppms) (model ppm:ppm) context arguments)
   "Obtain PPM location corresponding to the current context. If not found,
 this means that either "
   (multiple-value-bind (location found?)
@@ -297,7 +296,7 @@ this means that either "
 	    (ppm:get-root)
 	    (update-location d model (cdr context) arguments (car context))))))
 
-(defmethod get-model ((d accumulator) arguments)
+(defmethod get-model ((d ppms) arguments)
   "Obtain a PPM model for the current arguments."
   (multiple-value-bind (model found?)
       (gethash arguments (ppms d))
@@ -305,7 +304,7 @@ this means that either "
       (error "No PPM model found for arguments ~a." arguments))
     model))
 	      
-(defmethod probability-distribution ((d accumulator) arguments congruent-values)
+(defmethod probability-distribution ((d ppms) arguments congruent-values)
   "Obtain the location object of the appropriate PPM model given context.
 Context is obtained by accessing the previous self of the current variable, 
 which if the current variable is an accumulator, must represent the context.
