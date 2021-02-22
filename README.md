@@ -114,4 +114,5 @@ An introductory tutorial to using jackdaw can be found [here](https://github.com
 # References
 
 <a id="vdweij2017">van der Weij, B., Pearce, M. T., and Honing, H. (2017). A probabilistic model of meter perception: Simulating enculturation. *Frontiers in Psychology*. 8:824. doi: [10.3389/fpsyg.2017.00824](https://dx.doi.org/10.3389/fpsyg.2017.00824)
-<a id="vdweij2017">van der Weij, B. (2020). *Experienced listeners: Modeling the influence of long-term musical exposure on rhythm perception.* (Doctoral dissertation, Universiteit van Amsterdam, Amsterdam) [PDF](https://hdl.handle.net/11245.1/dd3e25aa-6006-486e-afcf-c0692e0afacd)
+
+<a id="vdweij2020">van der Weij, B. (2020). *Experienced listeners: Modeling the influence of long-term musical exposure on rhythm perception.* (Doctoral dissertation, Universiteit van Amsterdam, Amsterdam) [PDF](https://hdl.handle.net/11245.1/dd3e25aa-6006-486e-afcf-c0692e0afacd)
