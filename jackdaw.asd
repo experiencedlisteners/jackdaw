@@ -14,7 +14,8 @@
   :components
   ((:file "probabilities")
    (:file "jackdaw")
-   (:file "distributions")))
+   (:file "distributions")
+   (:file "modeling")))
 
 (defsystem jackdaw-tests
   :name "jackdaw-tests"
