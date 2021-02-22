@@ -86,10 +86,8 @@ attempting to access probabilities." p (type-of d)))))
 
 (defdistribution bernouilli () (p &key (psymbol t))
     (args symbol)
-  (let ((p (if (null args) p
-	       (cdr (assoc args p :test #'equal)))))
-    (if (equal symbol psymbol) p
-	(- 1 p))))
+  (if (equal symbol psymbol) p
+      (- 1 p)))
 
 (defestimator bernouilli data symbol arguments
     ((psymbol (car (car (car data))))
