@@ -8,7 +8,7 @@ may not be represented logarithmically."))
 
 (cl:in-package #:probabilities)
 
-(defparameter *log-space* t)
+(defparameter *log-space* nil)
 
 (defmacro defop (name params default log-space)
   `(defun ,name (,@params)
