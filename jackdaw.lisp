@@ -169,7 +169,7 @@ By default, the default-form will throw an error if the key is not found."
    (distribution :initarg :distribution :accessor distribution :type distribution)
    (model :initarg :model :reader model :type bayesian-network)
    (hidden :initarg :hidden :accessor hidden :initform t)
-   (key :initarg :key :reader key)))
+   (observer :initarg :observer :accessor observer)))
 
 (defclass dag ()
   ((vertices :accessor vertices)
@@ -277,11 +277,15 @@ arguments but not &optional or (a default a-supplied-p) style parameters.
 VARIABLES is a list of variable definitions."
   (let* ((direct-slots (%lambda-list->direct-slots parameters))
 	 (parameter-names (mapcar #'%param-name (remove '&key parameters)))
+	 (vertices (mapcar #'car variables))
+	 (observer-arguments
+	   (loop for v in vertices collect (intern (format nil "~a-OBSERVER" v))))
 	 (edges (make-hash-table))
-	 (dist-specs) (var-specs) (vertices)
-	 (methods))
+	 (dist-specs) (var-specs) (methods))
     (assert (or (null superclasses)
-		(eq (length (remove-if (lambda (c) (subtypep c 'jackdaw:bayesian-network)) superclasses))
+		(eq (length (remove-if (lambda (c)
+					 (subtypep c 'jackdaw:bayesian-network))
+				       superclasses))
 		    (1- (length superclasses))))
 	    () "At least one superclass of ~a must be of type BAYESIAN-NETWORK." class)
     ;; Initialize dist-specs, var-specs, and vertices, verify model consistency,
@@ -290,15 +294,14 @@ VARIABLES is a list of variable definitions."
       for variable in (reverse variables) ; since we're PUSHing
       collect
       (destructuring-bind (v parents distribution constraint
-			   &key (key `(lambda (moment)
+			   &key (observer `(lambda (moment)
 					(getf moment ,(%kw v)
 					      (format nil "~s not found in moment" ',v))))
 			     (formatter '#'identity) (hidden t))
 	  variable
 	(setf (gethash v edges) parents)
-	(push v vertices)
 	(push distribution dist-specs)
-	(push (list key formatter hidden) var-specs)
+	(push (list observer formatter hidden) var-specs)
 	(push 
 	 `(defmethod congruent-values ((model ,class)
 				      (variable (eql ',v))
@@ -332,26 +335,33 @@ VARIABLES is a list of variable definitions."
        (defmethod vertices ((m ,class))
 	 ',vertices)
        (defmethod edge-table ((m ,class)) ,edges)
-       (defmethod initialize-instance :after ((model ,class) &key)
+       (defmethod initialize-instance :after
+	   ((model ,class)
+	    &key ,@observer-arguments)
 	 (let (,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
 			collect `(,p (,p model))))
 	   (declare (ignorable ,@parameter-names))
-	    ,@(loop for v in vertices
-		    for dist-spec in dist-specs
-		    collect
-		    (destructuring-bind (dist dist-args &rest dist-params) dist-spec
-		      (assert (subsetp dist-args (gethash v edges))
-			      () "Arguments to distribution of ~a must be subset of parents." v)
-		      (assert (subtypep dist 'distribution) ()
-			      "Distribution argument of the variable ~a (~a) must be of type DISTRIBUTION." 
-			      v dist)
-		      `(setf (distribution (gethash ',v (variables model)))
-			     (apply #'make-instance ',dist
-				    ,(append `(list :arguments ',dist-args
-						    :variable-symbol ',v)
-					     dist-params)))))))
+	   ,@(loop for v in vertices for arg in observer-arguments 
+		   collect
+		   `(unless (null ,arg)
+		      (setf (observer (model-variable model ',v)) ,arg)))
+	   ,@(loop for v in vertices
+		   for dist-spec in dist-specs
+		   collect
+		   (destructuring-bind (dist dist-args &rest dist-params) dist-spec
+		     (assert (subsetp dist-args (gethash v edges))
+			     () "Arguments to distribution of ~a must be subset of parents." v)
+		     (assert (subtypep dist 'distribution) ()
+			     "Distribution argument of the variable ~a (~a) must be of type DISTRIBUTION." 
+			     v dist)
+		     `(setf (distribution (model-variable model ',v))
+			    (apply #'make-instance ',dist
+				   ,(append `(list :arguments ',dist-args
+						   :variable-symbol ',v)
+					    dist-params)))))))
        (defun ,(intern (format nil "MAKE-~A-MODEL" (symbol-name class)))
-	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars observe)
+	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars
+	    observe)
 	 (make-instance ',class :output output :output-vars output-vars :observe observe
 			,@(%lambda-list->plist parameters))))))
 
@@ -361,7 +371,7 @@ VARIABLES is a list of variable definitions."
 	    "Output variable ~a is not a variable of ~a." v (type-of model)))
   (let ((variables (make-hash-table)))
     (loop for v in (vertices model)
-	  for (key formatter hidden) in (slot-value model '%var-specs)
+	  for (observer formatter hidden) in (slot-value model '%var-specs)
 	  ;;for dist-spec in (slot-value model '%dist-specs)
 	  do
 	     (setf (gethash v variables)
@@ -369,7 +379,7 @@ VARIABLES is a list of variable definitions."
 		    'jackdaw::random-variable
 		    :model model
 		    :hidden hidden
-		    :name v :key (eval key) :output (eval formatter))))
+		    :name v :observer (eval observer) :output (eval formatter))))
     (setf (slot-value model 'variables) variables))
   (apply #'observe (cons model observe)))
 
@@ -407,14 +417,19 @@ VARIABLES is a list of variable definitions."
   "Obtain the observed value of VARIABLE from MOMENT given M."
   (let ((v (gethash variable (variables m))))
     (handler-case
-	(funcall (key v) moment)
+	(funcall (observer v) moment)
       (error (e)
 	(warn "An error occurred in the observation function of ~a"
 	      variable)
 	(error e)))))
 
-(defmethod hidden? ((m bayesian-network) variable)
-  (hidden (gethash variable (variables m))))
+(defmethod observations ((m bayesian-network) moment)
+  (let ((observations (make-hash-table)))
+    (dolist (v (observed-variables m) observations)
+      (setf (gethash v observations) (observed-value m v moment)))))
+
+(defmethod hidden? ((m bayesian-network) vertex)
+  (hidden (model-variable m vertex)))
 
 (defmethod observed? ((m bayesian-network) variable)
   (not (hidden (gethash variable (variables m)))))
@@ -434,8 +449,11 @@ VARIABLES is a list of variable definitions."
   "Make VARIABLES observable."
   (%set-hidden m nil vertices))
 
+(defmethod model-variable ((m bayesian-network) vertex)
+  (gethash-or vertex (variables m)))
+
 (defmethod model-variable-distribution ((m bayesian-network) vertex)
-  (distribution (gethash vertex (variables m))))
+  (distribution (model-variable m vertex)))
 
 (defmethod state-variables ((m dynamic-bayesian-network))
   (reduce #'union (mapcar (lambda (v) (horizontal-edges m v)) (vertices m))))
@@ -450,11 +468,6 @@ VARIABLES is a list of variable definitions."
 
 (defmethod order ((m bayesian-network))
   (length (vertices m)))
-
-(defmethod observations ((m bayesian-network) moment)
-  (let ((observations (make-hash-table)))
-    (dolist (v (observed-variables m) observations)
-      (setf (gethash v observations) (observed-value m v moment)))))
 
 (defmethod congruent-states (states observations)
   "Return the subset of STATES that is consistent with OBSERVATIONS."
@@ -491,7 +504,6 @@ on this root state."
     (setf (gethash :probability new-state) probability)
     (setf (gethash variable new-state) value)
     new-state))
-
 
 (defun format-obs (observation)
   (format nil "(~{~{~w~^: ~}~^, ~})~%"
