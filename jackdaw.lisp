@@ -800,3 +800,13 @@ congruent by the end of the sequence."
 		if (not (eq k :probability))
 		  collect (list k (gethash k state)))
 	  (gethash :probability state)))
+
+
+(defmethod state-probability-table (states &rest variables)
+  (let* ((header (append variables (list :probability)))
+	 (table))
+    (dolist (state states)
+      (push (loop for key in (append variables (list :probability))
+		  collect (gethash-or key state))
+	    table))
+    (cons header table)))
