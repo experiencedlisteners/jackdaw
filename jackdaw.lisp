@@ -677,6 +677,11 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 	(setf (gethash values marginal) new-state)))
     (hash-table-values marginal)))
 
+(defmethod rotate-states ((m dynamic-bayesian-network) states &key (keep-trace? t))
+  (unless (null states)
+    (cons (rotate-state m (car states) :keep-trace? keep-trace?)
+	  (rotate-states m (cdr states) :keep-trace? keep-trace?))))
+
 (defmethod rotate-state ((m dynamic-bayesian-network) state &key (keep-trace? t))
   "\"Rotate\" a state. In  rotated (a priori) version of a state, every parameter
 X is renamed ^X and variables of the form ^X in STATE are dropped.
@@ -696,35 +701,27 @@ values, their probability and the previous trace."
   
 (defmethod transition ((m dynamic-bayesian-network) moment congruent-states
 		       &key keep (keep-trace? t))
+  "Given each state in CONGRUENT-STATES, rotate it and generate new congruent states 
+given MOMENT. Perform an intermediate marginalization to state variables, then gather 
+all new states together and marginalize again."
   (let ((observation (observations m moment))
 	(persistent-variables (union (model-variables m) keep)))
     (flet ((generate-moment (state)
-	     (let* ((states
-		      (generate-moment m observation
-				       (rotate-state m state :keep-trace? keep-trace?)))
-		    (congruent-states
-		      (if *generate-a-priori-states*
-			  (congruent-states states observation)
-			  states)))
+	     (let* ((congruent-states
+		      (generate-moment m observation state)))
 	       (%write-states m congruent-states observation)
 	       (marginalize congruent-states persistent-variables))))
-      (let* ((new-states
-	       (apply #'append (mapcar #'generate-moment congruent-states))))	
-	(when (eq (length new-states) 0)
-	  (error "No a posteriori congruent states at moment
-~a at position #~a in sequence ~a." moment *moment* *sequence*))
-	(marginalize new-states persistent-variables)))))
-
-(defmethod generate-sequences ((m dynamic-bayesian-network) dataset &optional (write-header? t))
-  "Process a dataset of sequences. Note that this method assumes each sequence is a CONS 
-the CAR of which is used to identify the sequence. This may be something like an index 
-or a unique-id."
-  (let* ((sequence (car dataset))
-	 (*sequence* (car sequence)))
-    ;;(warn "~a" (car sequence))
-    (generate-sequence m (cdr sequence) :write-header? write-header?))
-  (unless (null (cdr dataset))
-    (generate-sequences m (cdr dataset) nil)))
+      (let* ((congruent-states (rotate-states m congruent-states :keep-trace? keep-trace?))
+	     (congruent-states
+	       (apply #'append (mapcar #'generate-moment congruent-states)))
+	     (congruent-states (marginalize congruent-states persistent-variables))
+	     (congruent-states
+	       (if *generate-a-priori-states*
+		   (congruent-states congruent-states observation) 
+		   congruent-states)))
+	(when (eq (length congruent-states) 0)
+	  (error "No states congruent with observation ~a of moment ~a at position #~a in sequence ~a." (format-obs observation) moment *moment* *sequence*))
+	congruent-states))))
 
 (defmethod generate-sequence ((m dynamic-bayesian-network) moments
 			  &key keep
