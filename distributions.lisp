@@ -317,3 +317,11 @@ parent variables are instantiated."
     (ppm:set-alphabet model alphabet)
     (mapcar (lambda (item) (pr:in (cadr item)))
 	    (ppm::get-distribution model location))))
+
+(defmethod probability-table ((d cpt))
+  (let* ((header (append (arguments d) (list (variable-symbol d) 'probability)))
+	 (table))
+    (maphash #'(lambda (k value)
+		 (push (append k (list value)) table))
+	     (cpt d))
+    (cons header table)))
