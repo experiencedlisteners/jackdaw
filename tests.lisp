@@ -123,14 +123,14 @@
 		    '(:p) :test #'equal)))
 
 (deftest-with-model generate (test-1 :observe '(:c))
-  (let ((posterior-congruent-states (generate model '(:x))))
+  (let ((posterior-congruent-states (generate model '(:p))))
     (test (equal (length posterior-congruent-states) 2))))
 
 (deftest-with-model state-variables (test-1 :observe '(:c))
-  (test (equal (jackdaw::state-variables model) '(:b))))
+  (test (equal (jackdaw::state-variables model) '(:a))))
 
 (deftest-with-model model-variables (test-1 :observe '(:c))
-  (test (equal (jackdaw::model-variables model) '(:b :c))))
+  (test (equal (jackdaw::model-variables model) '(:a :c))))
 
 (deftest-with-model rotate-state (test-1 :observe '(:c))
   (let ((state (plist->hash-table
@@ -143,7 +143,7 @@
 		  :c 4))))
     (test (plists-equal (hash-table->plist (jackdaw::rotate-state model state :keep-trace? nil))
 			  '(:probability 1
-			    :^b 3
+			    :^a 2
 			    :^c 4)))))
 
 (defmodel test-2 (dynamic-bayesian-network) ()
