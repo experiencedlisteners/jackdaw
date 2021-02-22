@@ -17,7 +17,7 @@
    #:states->probabilities #:trace-back
    #:pprint-state
    ;; Probability distributions
-   #:bernouilli #:cpt #:accumulator #:uniform
+   #:bernouilli #:cpt #:ppms #:uniform
    ;; Model definition utility macros
    #:defmodel #:deterministic #:normal
    #:recursive #:persistent #:one-shot
