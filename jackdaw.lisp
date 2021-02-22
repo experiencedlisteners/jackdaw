@@ -613,7 +613,7 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 	 (congruent-values
 	   (if (and (not hidden?))
 	       (when (member (gethash-or vertex observation)
-			     a-priori-congruent)
+			     a-priori-congruent :test #'equal)
 		 (list (gethash vertex observation)))
 	       a-priori-congruent)))
     (flet ((normalize (probabilities)
