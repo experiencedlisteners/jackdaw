@@ -252,10 +252,11 @@ must be a list of length 1 (the CDR of which is NIL)."
   (setf (slot-value d 'cpt) (alist->hash-table alist-cpt)))
 
 (defmethod spawn-ppm ((d ppms))
+  "Create a PPM model with the parameter settings stored in D."
   (make-instance
    'ppm:ppm :escape (escape d) :order-bound (order-bound d)
 	    :mixtures (mixtures d) :update-exclusion (update-exclusion d)
-	    :normalise nil ;; since normalization is done by us
+	    :normalise nil ;; avoids double work since normalization is done by us
 	    :alphabet (alphabet d)))
 
 (defmethod next-sequence ((d probability-distribution) congruent-states)
