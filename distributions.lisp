@@ -14,7 +14,20 @@
           alist)
     hashtable))
 
-(defmacro defdistribution (class superclasses parameters (args symbol) &body body)
+(defmacro defdistribution (class superclasses parameters
+			   (&optional symbol arguments distribution)
+			   &body body)
+  "Define a new probability distribution.
+
+Define a class named CLASS with superclasses SUPERCLASSES. One of the superclasses must
+be a subtype of DISTRIBUTION. If no superclass is given, the class will be created as
+a subclass of DISTRIBUTION.
+
+A list of parameters can be given in the PARAMETERS argument. 
+The probability function should be defined in BODY. When given, SYMBOL, ARGUMENTS, and 
+DISTRIBUTION are available within BODY and are bound to respectively the symbol of which 
+the probability is required, the values of the variables on which the distribution is 
+conditioned, and the distribution instance itself."
   (let* ((direct-slots (%lambda-list->direct-slots parameters)))
     (assert (or (null superclasses)
 		(eq (length (remove-if (lambda (c) (subtypep c 'distribution)) superclasses))
@@ -25,28 +38,32 @@
 	 ((%parameter-slots :initform ',(mapcar #'%param-name (remove '&key parameters)))	  
 	  ,@direct-slots))
        (defmethod probability ((d ,class) observation)
-	 (pr:in (let ((,symbol (car observation))
+	 (pr:in (let (,@(unless (null symbol) `((,symbol (car observation))))
 		      (arguments (cdr observation))
+		      ,@(unless (null distribution) `((,distribution d)))
 		      ,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
 			      collect `(,p (,p d))))
-		  (declare (ignorable ,symbol))
-		  ,(if (listp args)
-		       `(destructuring-bind ,args
+		  (declare (ignorable ,@(mapcar #'%param-name (remove '&key parameters))))
+		  ,(if (listp arguments)
+		       `(destructuring-bind ,arguments
 			    arguments
 			  ,@body)
-		       `(let ((,args arguments))
-			  (declare (ignorable ,args))
-			 ,@body)))))
+		       `(let ((,arguments arguments))
+			  ,@body)))))
        (defun ,(intern (format nil "MAKE-~A-DISTRIBUTION" (symbol-name class))) ,parameters
 	 (make-instance ',class ,@(%lambda-list->plist parameters))))))
 
-(defmacro defestimator (distribution data symbol arguments
+(defmacro defestimator (distribution (&optional data distribution-symbol)
+			(&optional symbol arguments)
 			binding-spec parameter-setters
 			&key dataset-handler sequence-handler observation-handler)
+  "Define an estimator of DISTRIBUTION.
+
+Estimators estimate the parameters of a distribution based on a set of observations."
   (let* ((observation-handler-code
 	   `(dolist (observation sequence)
-	      (let ((,symbol (car observation))
-		    (,arguments (cdr observation)))
+	      (let (,@(unless (null symbol) `((,symbol (car observation))))
+		    ,@(unless (null arguments) `((,arguments (cdr observation)))))
 		,@observation-handler)))
 	 (sequence-handler-code
 	   `(dolist (sequence ,data)
@@ -58,8 +75,10 @@
 	     ,@(unless (and (null sequence-handler)
 			   (null observation-handler))
 		(list sequence-handler-code)))))
-    `(defmethod estimate ((d ,distribution) ,data)
-       (let ,binding-spec
+    `(defmethod estimate ((d ,distribution) data)
+       (let (,@binding-spec
+	     ,@(unless (null data) `((,data data)))
+	     ,@(unless (null distribution-symbol) `((,distribution-symbol d))))
 	 ,@(unless (every #'null (list dataset-handler sequence-handler observation-handler))
 	    dataset-handler-code)
 	 ,@(loop for (parameter setter) in parameter-setters collect
@@ -85,11 +104,11 @@ attempting to access probabilities." p (type-of d)))))
 ;;;;;;;;;;;;;;;;;;; Probability distributions ;;;;;;;;;;;;;;;;;;;
 
 (defdistribution bernouilli () (p &key (psymbol t))
-    (args symbol)
+    (symbol)
   (if (equal symbol psymbol) p
       (- 1 p)))
 
-(defestimator bernouilli data symbol arguments
+(defestimator bernouilli (data) (symbol arguments)
     ((psymbol (car (car (car data))))
      (total-count 0)
      (count 0))
@@ -102,17 +121,17 @@ attempting to access probabilities." p (type-of d)))))
    (when (equal symbol psymbol)
      (incf count))))
 
-(defdistribution uniform () () (args symbol) 1) ;; probabilities are normalized automatically
-(defestimator uniform data s a nil nil)
+(defdistribution uniform () () () 1) ;; probabilities are normalized automatically
+(defestimator uniform () () () ())
 
-(defdistribution deterministic () () (() symbol) 1)
-(defestimator deterministic data s a nil nil)
+(defdistribution deterministic () () () 1)
+(defestimator deterministic () () () ())
 (defmethod probabilities ((d deterministic) parents-state  congruent-states)
   (assert (eq (length congruent-states) 1) ()
 	  "Variable with deterministic distribution must have exactly one congruent state.")
   (call-next-method))
 
-(defdistribution cpt () (&key (cpt (make-hash-table))) (args symbol)
+(defdistribution cpt () (&key domain (cpt (make-hash-table))) (symbol args)
   (multiple-value-bind (p found?)
       (gethash (cons symbol args) cpt)
     ;;(format t "P~w = ~a~%" (cons symbol args) (gethash (cons symbol args) cpt))
@@ -120,25 +139,29 @@ attempting to access probabilities." p (type-of d)))))
       (warn "Probability of ~a given ~a not found in conditional probability table." symbol args))
     p))
 
-(defestimator cpt data symbol arguments
+(defestimator cpt (data) (symbol arguments)
     ((counts (make-hash-table :test 'equal))
-     (context-counts (make-hash-table :test 'equal)))
+     (context-counts (make-hash-table :test 'equal))
+     (domain))
     ((cpt
       (let ((cpt (make-hash-table :test 'equal)))
 	(maphash (lambda (obs count)
 		   (setf (gethash obs cpt)
 			 (/ count (gethash (cdr obs) context-counts))))
 		 counts)
-	cpt)))
+	cpt)
+      (domain domain)))
   :observation-handler
-  ((setf (gethash (cons symbol arguments) counts)
+  ((unless (member symbol domain :test #'equal)
+     (push symbol domain))
+   (setf (gethash (cons symbol arguments) counts)
 	 (1+ (gethash (cons symbol arguments) counts 0)))
    (setf (gethash arguments context-counts)
 	 (1+ (gethash arguments context-counts 0)))))
 
-(defmethod estimate ((model ppm::ppm) data)
-  (ppm:model-dataset model data :construct? t :predict? nil)
-  model)
+(defestimator ppm:ppm (data model) () () ()
+	      :dataset-handler
+	      (ppm:model-dataset model data :construct? t :predict? nil))
 
 (defclass ppms (distribution)
   ((alphabet :reader alphabet :initform nil)
@@ -151,7 +174,7 @@ attempting to access probabilities." p (type-of d)))))
   (:documentation "A set of PPM models that can be conditioned on other variables.
 Which PPM model is used depends on the values of the variables conditioned on."))
 
-(defestimator ppms data symbol arguments
+(defestimator ppms (data) (symbol arguments)
   ((ppms (make-hash-table :test #'equal))
    (datasets (make-hash-table :test #'equal)))
   ((ppms (progn

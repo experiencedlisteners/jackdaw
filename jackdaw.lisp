@@ -5,7 +5,7 @@
    #:distribution #:bayesian-network #:dynamic-bayesian-network
    ;; Evaluating models
    #:generate #:generate-sequences #:probability
-   #:probabilities
+   #:probabilities #:domain
    ;; Model properties
    #:variables #:distributions
    ;; Variable properties
