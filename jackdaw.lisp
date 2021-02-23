@@ -1,5 +1,6 @@
-(cl:defpackage #:jackdaw
+(cl:defpackage :jackdaw
   (:use #:common-lisp)
+  (:nicknames :jd)
   (:export
    ;; Top-level classes
    #:probability-distribution #:bayesian-network #:dynamic-bayesian-network
