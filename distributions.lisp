@@ -325,6 +325,12 @@ this means that either "
     (unless found?
       (error "No PPM model found for arguments ~a." arguments))
     model))
+
+
+(defmethod probabilities ((d probability-distribution) arguments congruent-values)
+  "Obtain the probabilities of a list of congruent values given arguments."
+  (mapcar (lambda (s) (probability d (cons s arguments)))
+	  congruent-values))
 	      
 (defmethod probabilities ((d ppms) arguments congruent-values)
   "Obtain the location object of the appropriate PPM model given context.
@@ -341,9 +347,8 @@ parent variables are instantiated."
 	    (ppm::get-distribution model location))))
 
 (defmethod probability-table ((d cpt))
-  (let* ((header (append (arguments d) (list (variable-symbol d) 'probability)))
-	 (table))
+  (let* ((table))
     (maphash #'(lambda (k value)
 		 (push (append k (list value)) table))
 	     (cpt d))
-    (cons header table)))
+    table))

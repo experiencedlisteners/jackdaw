@@ -2,14 +2,16 @@
   (:use #:common-lisp)
   (:export
    ;; Top-level classes
-   #:distribution #:bayesian-network #:dynamic-bayesian-network
+   #:probability-distribution #:bayesian-network #:dynamic-bayesian-network
+   #:random-variable
    ;; Evaluating models
    #:generate #:generate-sequences #:probability
    #:probabilities #:domain #:estimate
    ;; Model properties
-   #:variables #:distributions
+   #:variables #:observed-variables #:model-variable
+   #:model-variable-distribution
    ;; Variable properties
-   #:name #:distribution
+   #:vertex #:distribution #:parents
    ;; Manipulating Bayesian networks
    #:observe #:hide
    ;; Manipulating lists of states
@@ -175,7 +177,8 @@ By default, the default-form will throw an error if the key is not found."
 (defclass dynamic-bayesian-network (bayesian-network) ())
 
 (defclass random-variable ()
-  ((name :initarg :name :reader name)
+  ((parents :initarg :parents :reader parents :initform nil)
+   (vertex :initarg :vertex :reader vertex)
    (output :initarg :output :reader output)
    (distribution :initarg :distribution :accessor distribution :type probability-distribution)
    (model :initarg :model :reader model :type bayesian-network)
@@ -362,10 +365,7 @@ VARIABLES is a list of variable definitions."
 			     "Distribution argument of the variable ~a (~a) must be of type PROBABILITY-DISTRIBUTION." 
 			     v dist)
 		     `(setf (distribution (model-variable model ',v))
-			    (apply #'make-instance ',dist
-				   ,(append `(list :arguments ',dist-args
-						   :variable-symbol ',v)
-					    dist-params)))))))
+			    (apply #'make-instance ',dist ,dist-params))))))
        (defun ,(intern (format nil "MAKE-~A-MODEL" (symbol-name class)))
 	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars
 	    observe)
@@ -385,8 +385,9 @@ VARIABLES is a list of variable definitions."
 		   (make-instance
 		    'jackdaw::random-variable
 		    :model model
+		    :parents (edges model v)
 		    :hidden hidden
-		    :name v :observer (eval observer) :output (eval formatter))))
+		    :vertex v :observer (eval observer) :output (eval formatter))))
     (setf (slot-value model 'variables) variables))
   (apply #'observe (cons model observe)))
 
@@ -556,14 +557,15 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
   (let* ((dataset (estimation-dataset m dataset)))
     (dotimes (vertex-index (order m) m)
       (let* ((v (elt (vertices m) vertex-index))
+	     (variable (model-variable m v))
 	     (distribution (model-variable-distribution m v))
 	     (root (loop repeat (order m) collect +inactive+))
 	     (arguments
 	       (mapcar (lambda (v)
 			 (position (if (horizontal? v) (basename v) v) (vertices m)))
-		       (arguments distribution)))
+		       (parents variable)))
 	     (horizontal?
-	      (mapcar (lambda (v) (horizontal? v)) (arguments distribution))))
+	      (mapcar (lambda (v) (horizontal? v)) (parents variable))))
 	(labels
 	    ((get-variable-observation (previous current)
 	       (mapcar (lambda (i horizontal?) (elt (if horizontal? previous current) i))
@@ -583,35 +585,32 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 (defmethod probability ((m bayesian-network) observation)
   (evidence m (generate m observation)))
 
-(defmethod probabilities ((d distribution) parents-state congruent-values)
-  "Obtain the probability of provided CONGRUENT-VALUES by the PROBABILITY method.
-This is just a wrapper for PROBABILITY-DISTRIBUTION which grabs arguments from PARENTS-STATE
+(defmethod probabilities ((variable random-variable) parents-state congruent-values)
+  "Obtain the probabilities of a list of CONGRUENT-VALUES of VARIABLE.
+This is just a wrapper for the PROBABILITIES of the variable's distribution.
+It grabs the arguments from the parents
 and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
-  (let ((arguments (mapcar (lambda (v) (gethash v parents-state)) (arguments d))))
+  (let ((arguments (mapcar (lambda (v) (gethash v parents-state)) (parents variable))))
     (if (equal congruent-values (list +inactive+))
 	(list (pr:in 1))
-	(probability-distribution d arguments congruent-values))))
-
-(defmethod probability-distribution ((d distribution) arguments congruent-values)
-  (mapcar (lambda (s) (probability d (cons s arguments)))
-	  congruent-values))
+	(probabilities (distribution variable)
+		       arguments congruent-values))))
 
 (defmethod descr ((m bayesian-network))
   (format nil "~a model" (symbol-name (type-of m))))
 
 (defmethod descr ((v random-variable))
-  (format nil "variable ~w of ~a" (name v) (descr (model v))))
+  (format nil "variable ~w of ~a" (vertex v) (descr (model v))))
 
-(defmethod descr ((d distribution))
-  (format nil "~a distribution of variable ~a" (type-of d) (variable-symbol d)))
+(defmethod descr ((d probability-distribution))
+  (format nil "~a" (type-of d)))
 
 ;;(defmethod generate :before (v obs &optional p)
 ;;  (format t "Generating ~a~%" (descr v)))
 
 (defmethod generate ((variable random-variable) observation
 		     &optional (parent-state (make-hash-table)))
-  (let* ((vertex (name variable))
-	 (distribution (distribution variable))
+  (let* ((vertex (vertex variable))
 	 (a-priori-congruent
 	   (congruent-values (model variable) vertex parent-state))
 	 (hidden? (hidden variable))
@@ -631,7 +630,7 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 			   vertex value parent-state)))
       (if *estimate?*
 	  (mapcar #'branch-state congruent-values)
-	  (let* ((probabilities (probabilities distribution parent-state congruent-values))
+	  (let* ((probabilities (probabilities variable parent-state congruent-values))
 		 (probabilities (if hidden? (normalize probabilities)
 				    probabilities)))
 	    (mapcar #'branch-state congruent-values probabilities))))))
@@ -801,6 +800,10 @@ congruent by the end of the sequence."
 		  collect (list k (gethash k state)))
 	  (gethash :probability state)))
 
+(defmethod probability-table ((var random-variable))
+  (let ((header (append (parents var)
+			(list (vertex var) 'probability))))
+    (cons header (probability-table (distribution var)))))
 
 (defmethod state-probability-table (states &rest variables)
   (let* ((header (append variables (list :probability)))
