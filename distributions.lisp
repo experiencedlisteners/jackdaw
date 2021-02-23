@@ -20,8 +20,8 @@
   "Define a new probability distribution.
 
 Define a class named CLASS with superclasses SUPERCLASSES. One of the superclasses must
-be a subtype of DISTRIBUTION. If no superclass is given, the class will be created as
-a subclass of DISTRIBUTION.
+be a subclass of PROBABILITY-DISTRIBUTION. If no superclass is given, the class will be created as
+a subclass of PROBABILITY-DISTRIBUTION.
 
 A list of parameters can be given in the PARAMETERS argument. 
 The probability function should be defined in BODY. When given, SYMBOL, ARGUMENTS, and 
@@ -30,12 +30,16 @@ the probability is required, the values of the variables on which the distributi
 conditioned, and the distribution instance itself."
   (let* ((direct-slots (%lambda-list->direct-slots parameters)))
     (assert (or (null superclasses)
-		(eq (length (remove-if (lambda (c) (subtypep c 'distribution)) superclasses))
+		(eq (length (remove-if (lambda (c)
+					 (subtypep c 'probability-distribution))
+				       superclasses))
 		    (1- (length superclasses))))
-	    () "At least one superclass of ~a must be of type DISTRIBUTION." class)
+	    ()
+	    "At least one superclass of ~a must be of type PROBABILITY-DISTRIBUTION."
+	    class)
     `(%muffle-redefinition-warnings
-       (defclass ,class ,(if (null superclasses) '(distribution) superclasses)
-	 ((%parameter-slots :initform ',(mapcar #'%param-name (remove '&key parameters)))	  
+       (defclass ,class ,(if (null superclasses) '(probability-distribution) superclasses)
+	 ((%parameters :initform ',(mapcar #'%param-name (remove '&key parameters)))	  
 	  ,@direct-slots))
        (defmethod probability ((d ,class) observation)
 	 (pr:in (let (,@(unless (null symbol) `((,symbol (car observation))))
@@ -86,19 +90,14 @@ Estimators estimate the parameters of a distribution based on a set of observati
 			,setter)))
        d)))
 
-(defclass distribution ()
-  ((arguments :initarg :arguments :reader arguments :initform nil)
-   (variable-symbol :initarg :variable-symbol :reader variable-symbol)
-   (%parameters :initform nil)))
-
-(defmethod probability :before ((d distribution) observation)
+(defmethod probability :before ((d probability-distribution) observation)
   (dolist (p (slot-value d '%parameters))
     (unless (slot-boundp d p)
       (error "Distribution parameter ~a of ~a not initialized. You
 must either estimate the model or provide the parameters manually before
 attempting to access probabilities." p (type-of d)))))
 
-(defmethod estimate ((d distribution) data)
+(defmethod estimate ((d probability-distribution) data)
   (error "Distribution of type ~a has no defined estimator." (type-of d)))
 
 ;;;;;;;;;;;;;;;;;;; Probability distributions ;;;;;;;;;;;;;;;;;;;
@@ -163,7 +162,7 @@ attempting to access probabilities." p (type-of d)))))
 	      :dataset-handler
 	      (ppm:model-dataset model data :construct? t :predict? nil))
 
-(defclass ppms (distribution)
+(defclass ppms (probability-distribution)
   ((alphabet :reader alphabet :initform nil)
    (escape :initarg :escape :reader escape :initform :c)
    (mixtures :initarg :mixtures :reader mixtures :initform t)
@@ -196,10 +195,10 @@ Which PPM model is used depends on the values of the variables conditioned on.")
       (setf (gethash context datasets) nil))
     (push (reverse observation-sequence) (gethash context datasets))))
 
-(defwriter distribution (m)
-	   (loop for s in (%parameter-slots m) collect (slot-value m s)))		 
-(defreader distribution (m data)
-  (loop for v in data for s in (%parameter-slots m)
+(defwriter probability-distribution (m)
+	   (loop for s in (%parameters m) collect (slot-value m s)))		 
+(defreader probability-distribution (m data)
+  (loop for v in data for s in (%parameters m)
 	collect (slot-value m s)))
 (defwriter cpt (m) (hash-table->alist (p m)))
 (defreader cpt (m p) (setf (slot-value m 'p) (alist->hash-table p)))
@@ -274,7 +273,7 @@ states." (type-of d))))
 	    :normalise nil ;; since normalization is done by us
 	    :alphabet (alphabet d)))
 
-(defmethod next-sequence ((d distribution) congruent-states)
+(defmethod next-sequence ((d probability-distribution) congruent-states)
   "Called after each training sequence. May be used to update
 model state.")
 
@@ -327,7 +326,7 @@ this means that either "
       (error "No PPM model found for arguments ~a." arguments))
     model))
 	      
-(defmethod probability-distribution ((d ppms) arguments congruent-values)
+(defmethod probabilities ((d ppms) arguments congruent-values)
   "Obtain the location object of the appropriate PPM model given context.
 Context is obtained by accessing the previous self of the current variable, 
 which if the current variable is an accumulator, must represent the context.

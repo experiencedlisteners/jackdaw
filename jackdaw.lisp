@@ -158,9 +158,15 @@ By default, the default-form will throw an error if the key is not found."
 
 ;; Objects
 
-(defclass bayesian-network (distribution dag)
+(defclass dag ()
+  ((vertices :accessor vertices)
+   (edge-table :reader edge-table :type 'hastable)))
+
+(defclass probability-distribution ()
+  ((%parameters :reader %parameters :initform nil)))
+
+(defclass bayesian-network (probability-distribution dag)
   ((%var-specs :allocation :class :type list)
-   (%parameter-slots :reader %parameter-slots :allocation :class :type list)
    (output :accessor output :initarg :output :initform nil)
    (output-vars :accessor output-vars :initform nil :initarg :output-vars)
    (distributions :reader distributions :type hash-table)
@@ -171,14 +177,10 @@ By default, the default-form will throw an error if the key is not found."
 (defclass random-variable ()
   ((name :initarg :name :reader name)
    (output :initarg :output :reader output)
-   (distribution :initarg :distribution :accessor distribution :type distribution)
+   (distribution :initarg :distribution :accessor distribution :type probability-distribution)
    (model :initarg :model :reader model :type bayesian-network)
    (hidden :initarg :hidden :accessor hidden :initform t)
    (observer :initarg :observer :accessor observer)))
-
-(defclass dag ()
-  ((vertices :accessor vertices)
-   (edge-table :reader edge-table :type 'hastable)))
 
 (defmethod edges ((m dag) vertex)
   (gethash vertex (edge-table m)))
@@ -333,7 +335,7 @@ VARIABLES is a list of variable definitions."
        (setf (getf *model-parameters* ',class) ',parameters)
        (defclass ,class ,(if (null superclasses) '(bayesian-network) superclasses)
 	 ((%var-specs :initform ',var-specs)
-	  (%parameter-slots :initform ',parameter-names)
+	  (%parameters :initform ',parameter-names)
 	  ;;(%dist-specs :initform ',dist-specs)
 	  ,@direct-slots))
        ,@methods
@@ -356,8 +358,8 @@ VARIABLES is a list of variable definitions."
 		   (destructuring-bind (dist dist-args &rest dist-params) dist-spec
 		     (assert (subsetp dist-args (gethash v edges))
 			     () "Arguments to distribution of ~a must be subset of parents." v)
-		     (assert (subtypep dist 'distribution) ()
-			     "Distribution argument of the variable ~a (~a) must be of type DISTRIBUTION." 
+		     (assert (subtypep dist 'probability-distribution) ()
+			     "Distribution argument of the variable ~a (~a) must be of type PROBABILITY-DISTRIBUTION." 
 			     v dist)
 		     `(setf (distribution (model-variable model ',v))
 			    (apply #'make-instance ',dist
@@ -396,7 +398,7 @@ VARIABLES is a list of variable definitions."
   (deserialize (distribution v) data))
 (defwriter bayesian-network (m)
   (let ((variables)
-	(parameter-slots (loop for s in (%parameter-slots m)
+	(parameter-slots (loop for s in (%parameters m)
 			       collect (slot-value m s))))
     (loop for vertex being the hash-key using (hash-value variable) of (variables m) do
       (setf (getf variables variables) (serialize variable)))
@@ -405,7 +407,7 @@ VARIABLES is a list of variable definitions."
   (destructuring-bind (parameters variables)
       data
     (loop for p in parameters
-	  for s in (%parameter-slots m)
+	  for s in (%parameters m)
 	  do (setf (slot-value m s) p))
     (loop for (vertex variable) on variables by #'cddr do
       (with-input-from-string (s (write-to-string variable))
