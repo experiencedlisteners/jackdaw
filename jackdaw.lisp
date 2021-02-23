@@ -532,7 +532,7 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 		   (loop for v in vertices
 			 collect (gethash-or v s)))))
       (cons result (unless (null (cdr sequence))
-		     (generate-congruent-states m (cdr sequence) vertices states))))))
+		     (generate-congruent-values m (cdr sequence) vertices states))))))
 
 (defmethod estimation-dataset ((m dynamic-bayesian-network) observations &optional vertices)
   (let* ((congruent-values-per-moment
