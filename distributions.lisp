@@ -1,10 +1,12 @@
 (cl:in-package #:jackdaw)
 
-(defun hash-table->alist (hashtab &key (key #'identity))
+(defun hash-table->alist (hashtab &key (key #'identity) (value #'identity))
   (let ((alist '()))
-    (maphash #'(lambda (k value)
+    (maphash #'(lambda (k v)
 		 (setq alist
-		       (cons (list k (funcall key value)) alist)))
+		       (cons (list (funcall key k)
+				   (funcall value v))
+			     alist)))
              hashtab)
     alist))
 
