@@ -161,6 +161,46 @@
   (test (approx-equal (pr:out (probability (jackdaw::model-variable-distribution model :b) '(:q :y)))
 		      (/ 2 3))))
 
+(deftest variable-value
+  (let ((variable (make-instance 'random-variable :vertex 'test :parents '(a b))))
+    (assert (equal (jackdaw::variable-value variable (plist->hash-table '(test 1 a 2 b 3)))
+		   '(1 2 3)))))
+
+(deftest variable-values
+  (let ((variable (make-instance 'random-variable :vertex 'test :parents '(a b))))
+    (assert (equal (jackdaw::variable-values
+		    variable
+		    (list (plist->hash-table '(test x a y b z))
+			  (plist->hash-table '(test p a q b r))
+			  (plist->hash-table '(test u a v b w))))
+		   '((x y z)
+		     (p q r)
+		     (u v w))))))
+
+(deftest cpt-alist-parameters
+  (let ((d (make-instance 'cpt 
+			  :alist-cpt
+			  (list (cons '(happy win)  0.8)
+				(cons '(sad win)    .2)
+				(cons '(happy lose) 0.4)
+				(cons '(sad lose)   0.6)))))
+    (assert (sets-equal (domain d) '(happy sad)))
+    (assert (eq (probability d '(happy win)) 0.8))
+    (assert (eq (probability d '(sad lose)) 0.6))))
+
+(defdistribution test-distribution ()
+    (&key (a 'x) (b 'y) (c 'z)) ())
+
+(deftest serialize-distribution
+  (let* ((d (make-instance 'test-distribution))
+	 (data (jackdaw::serialize d)))
+    (assert (equal data '(x y z)))
+    (let ((d2 (make-instance 'test-distribution)))
+      (with-input-from-string (s (format nil "~A" data))
+	(jackdaw::deserialize d2 s))
+      (with-slots (a b c) d2
+	  (assert (equal (list a b c) '(x y z)))))))
+
 ;;(deftest-with-model estimate (test-1)
 ;;  (test (equal (jackdaw::estimate model ) '(b c))))
 
@@ -188,8 +228,3 @@
 		   0) () "Unexpected value of first marginal state. Maybe order changed?")
     (test (approx-equal (pr:out (gethash :probability (first (jackdaw::marginalize states '(a)))))
 			  .4))))
-
-		   
-			  
-	   
-		 
