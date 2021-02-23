@@ -141,10 +141,12 @@ NIL
 ```
 
 Above, we first used `HIDE` to make `M` and `P0`, the two variables that describe the metrical interpretation of a rhythm, hidden.
-Then, we evaluated the model evidence for an (otherwise uninteresting) rhythmic pattern defined a list of one inter-onset interval: `(1)`.
+
+Then, we evaluated the *model evidence* for an (otherwise uninteresting) rhythmic pattern with `PROBABILITY`.
+
 Finally, we generated model states congruent with a simple rhythmic pattern, defined by the list of inter-onset intervals `(4 2 2 4)` with `GENERATE`.
 We marginalized them to a states containing just the variable `M` with `MARGINALIZE`, calculated posterior probabilities with `POSTERIOR`.
-The result of these operations is a list of states, which we converted to a probability table with STATE-PROBABILITY-TABLE, and displayed using `TABLE` from the `cl-ansi-term` library.
+The result of these operations is a list of states, which we converted to a probability table with `STATE-PROBABILITY-TABLE`, and displayed using `TABLE` from the `cl-ansi-term` library.
 
 # Documentation
 
