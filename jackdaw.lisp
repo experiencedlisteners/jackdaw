@@ -5,7 +5,7 @@
    #:distribution #:bayesian-network #:dynamic-bayesian-network
    ;; Evaluating models
    #:generate #:generate-sequences #:probability
-   #:probabilities #:domain
+   #:probabilities #:domain #:estimate
    ;; Model properties
    #:variables #:distributions
    ;; Variable properties
@@ -14,9 +14,11 @@
    #:observe #:hide
    ;; Manipulating lists of states
    #:transition #:evidence #:posterior
-   #:states->probabilities #:trace-back
-   #:pprint-state
+   #:state-probability-table #:trace-back
+   #:marginalize
+   #:pprint-state 
    ;; Probability distributions
+   #:probability #:estimate
    #:bernouilli #:cpt #:ppms #:uniform
    ;; Model definition tools
    #:defmodel #:defdistribution #:defestimator
@@ -522,7 +524,6 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
   (let* ((*estimate?* t)
 	 (*generate-a-priori-states* nil)
 	 (vertices (if (null vertices) (vertices m) vertices)))
-    (print vertices)
     (let* ((states (transition m (car sequence) states
 			       :keep vertices :keep-trace? nil))
 	   (result 
@@ -755,7 +756,7 @@ congruent by the end of the sequence."
   (gethash :probability
 	   (car (marginalize congruent-states (observed-variables m)))))
 
-(defmethod posterior-distribution ((m bayesian-network) congruent-states)
+(defmethod posterior ((m bayesian-network) congruent-states)
   (let ((evidence (evidence m congruent-states)))
     (dolist (state congruent-states congruent-states)
       (setf (gethash :probability state) (pr:div (gethash :probability state) evidence)))))
