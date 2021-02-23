@@ -760,12 +760,6 @@ congruent by the end of the sequence."
   (let ((evidence (evidence m congruent-states)))
     (dolist (state congruent-states congruent-states)
       (setf (gethash :probability state) (pr:div (gethash :probability state) evidence)))))
-
-(defun states->probabilities (states &rest variables)
-  (loop for s in states
-	collect
-	(list (loop for v in variables collect (gethash v s))
-	      (gethash :probability s))))
 			      
 (defmethod %write-header ((m bayesian-network) &optional (output (output m)))
   (let* ((output-var-names
