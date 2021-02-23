@@ -249,24 +249,7 @@ The context of a parameter is (CDR PROB), and corresponds to a list of states
 corresponding to variables that D is conditioned on. If D is not conditioned 
 on anything, the context may be set to NIL. This means that each parameter 
 must be a list of length 1 (the CDR of which is NIL)."
-  (dolist (parameter alist-cpt)
-    (setf (gethash (car parameter) (cpt d)) (cdr parameter)))
-  (let ((contexts (remove-duplicates (mapcar #'cdar alist-cpt) :test #'equal)))
-    (dolist (context contexts)
-      (let ((sum))
-	(maphash (lambda (param v)
-		   (when (equal (cdr param) context)
-		     (setf sum (apply #'+ (cons v (unless (null sum) (list sum)))))))
-		 (cpt d))
-	(when (> (abs (- sum 1)) 1.0e-10) ;; Check that sum is approximately one.
-	  (warn "Parameters of ~A sum to ~A, not to approximately 1.0, for context ~A."
-		(variable-symbol d) sum context))))))
-
-(defmethod initialize-instance :after ((d ppms) &key)
-  (loop for p in (arguments d) if (horizontal? p) do
-       (warn "~a has previous-moment arguments which is not supported at the
-moment. See NEXT-SEQUENCE for PPMS and TRANSITION, which ROTATEs
-states." (type-of d))))
+  (setf (slot-value d 'cpt) (alist->hash-table alist-cpt)))
 
 (defmethod spawn-ppm ((d ppms))
   (make-instance
