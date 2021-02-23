@@ -18,11 +18,14 @@
    #:pprint-state
    ;; Probability distributions
    #:bernouilli #:cpt #:ppms #:uniform
-   ;; Model definition utility macros
-   #:defmodel #:deterministic #:normal
-   #:recursive #:persistent #:one-shot
+   ;; Model definition tools
+   #:defmodel #:defdistribution #:defestimator
+   ;; Congruency constraint utilities
+   #:deterministic #:normal
+   #:recursive #:persist #:one-shot
    #:accumulate #:ngram #:chain
-   ;; Model serialization utilities
+   #:ensure-list #:inactive?
+   ;; Serialization utilities
    #:defreader #:defwriter
    ;; Metaprogramming
    #:model-exists? #:find-model
