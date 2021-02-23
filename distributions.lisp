@@ -45,16 +45,16 @@ conditioned, and the distribution instance itself."
 	  ,@direct-slots))
        (defmethod probability ((d ,class) observation)
 	 (pr:in (let (,@(unless (null symbol) `((,symbol (car observation))))
-		      (arguments (cdr observation))
+		      ,@(unless (null arguments) `((arguments (cdr observation))))
 		      ,@(unless (null distribution) `((,distribution d)))
 		      ,@(loop for p in (mapcar #'%param-name (remove '&key parameters))
 			      collect `(,p (,p d))))
 		  (declare (ignorable ,@(mapcar #'%param-name (remove '&key parameters))))
-		  ,(if (listp arguments)
+		  ,(if (and (listp arguments) (not (null arguments)))
 		       `(destructuring-bind ,arguments
 			    arguments
 			  ,@body)
-		       `(let ((,arguments arguments))
+		       `(let (,@(unless (null arguments) `((,arguments arguments))))
 			  ,@body)))))
        (defun ,(intern (format nil "MAKE-~A-DISTRIBUTION" (symbol-name class))) ,parameters
 	 (make-instance ',class ,@(%lambda-list->plist parameters))))))
