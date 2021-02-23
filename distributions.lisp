@@ -263,10 +263,10 @@ must be a list of length 1 (the CDR of which is NIL)."
   "Called after each training sequence. May be used to update
 model state.")
 
-(defmethod next-sequence ((d ppms) congruent-states)
-  (loop for state in congruent-states do
-       (let* ((sequence (gethash (variable-symbol d) state))
-	      (arguments (mapcar (lambda (v) (gethash v state)) (arguments d)))
+(defmethod next-sequence ((d ppms) congruent-values)
+  (loop for value in congruent-values do
+       (let* ((sequence (car value))
+	      (arguments (cdr value))
 	      (model (get-model d arguments)))
 	 (update-location d model (cdr sequence) arguments (car sequence))
 	 ;; TODO: Is it safe to model the sentinel multiple times for a single model?

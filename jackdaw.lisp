@@ -728,6 +728,19 @@ all new states together and marginalize again."
 	  (error "No states congruent with observation ~a of moment ~a at position #~a in sequence ~a." (format-obs observation) moment *moment* *sequence*))
 	congruent-states))))
 
+(defmethod variable-value ((var random-variable) state)
+  (cons (gethash (vertex var) state)
+	(loop for v in (parents var) collect (gethash v state))))
+
+(defmethod variable-values ((var random-variable) states)
+  (unless (null states)
+    (cons (variable-value var (car states))
+	  (variable-values var (cdr states)))))
+
+(defmethod next-sequence ((var random-variable) congruent-states)
+  (let ((variable-values (variable-values var congruent-states)))
+    (next-sequence (distribution var) variable-values)))
+
 (defmethod generate-sequence ((m dynamic-bayesian-network) moments
 			  &key keep
 			    (keep-trace? t)
