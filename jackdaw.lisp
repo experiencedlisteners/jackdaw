@@ -367,7 +367,7 @@ VARIABLES is a list of variable definitions."
 			     v dist)
 		     `(setf (distribution (model-variable model ',v))
 			    (apply #'make-instance ',dist ,dist-params))))))
-       (defun ,(intern (format nil "MAKE-~A-MODEL" (symbol-name class)))
+       (defun ,(intern (format nil "MAKE-~A-MODEL" (symbol-name class)) (symbol-package class))
 	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars
 	    observe)
 	 (make-instance ',class :output output :output-vars output-vars :observe observe
