@@ -503,8 +503,8 @@ on this root state."
 on this root state."
   (let ((state (make-hash-table)))
     (setf (gethash :probability state) (pr:in 1))
-    (dolist (variable (state-variables m))
-      (setf (gethash variable state) +inactive+))
+    (dolist (vertex (vertices m))
+      (setf (gethash vertex state) +inactive+))
     state))
 
 (defun branch-state (probability variable value &optional origin)
@@ -529,7 +529,7 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 	 (*generate-a-priori-states* nil)
 	 (vertices (if (null vertices) (vertices m) vertices)))
     (let* ((states (transition m (car sequence) states
-			       :keep vertices :keep-trace? nil))
+			       :intermediate-marginalization? vertices :keep-trace? nil))
 	   (result 
 	     (loop for s in states
 		   collect
@@ -683,44 +683,53 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 	(setf (gethash values marginal) new-state)))
     (hash-table-values marginal)))
 
-(defmethod rotate-states ((m dynamic-bayesian-network) states &key (keep-trace? t))
+(defmethod rotate-states ((m dynamic-bayesian-network) states
+			  &key (keep-trace? t)
+			    (persist (model-variables m)))
   (unless (null states)
-    (cons (rotate-state m (car states) :keep-trace? keep-trace?)
-	  (rotate-states m (cdr states) :keep-trace? keep-trace?))))
+    (cons (rotate-state m (car states) :keep-trace? keep-trace? :persist persist)
+	  (rotate-states m (cdr states) :keep-trace? keep-trace? :persist persist))))
 
-(defmethod rotate-state ((m dynamic-bayesian-network) state &key (keep-trace? t))
+(defmethod rotate-state ((m dynamic-bayesian-network) state
+			 &key (keep-trace? t)
+			 (persist (model-variables m)))
   "\"Rotate\" a state. In  rotated (a priori) version of a state, every parameter
 X is renamed ^X and variables of the form ^X in STATE are dropped.
 Optionally, a trace can be kept which stores a hash table containing the dropped
 values, their probability and the previous trace."
-  (let ((new-state (make-hash-table))
-	(persistent-variables (model-variables m)))
+  (let ((new-state (make-hash-table)))
     (setf (gethash :probability new-state) (gethash :probability state))
     (when keep-trace?
       (let ((trace (make-hash-table)))
-	(dolist (key (cons :trace persistent-variables))
+	(dolist (key (cons :probability (cons :trace persist)))
 	  (setf (gethash key trace) (gethash key state)))
 	(setf (gethash :trace new-state) trace)))
-    (dolist (variable persistent-variables new-state)
+    (dolist (variable persist new-state)
       (setf (gethash (previous variable) new-state)
-	    (gethash variable state)))))
+	    (gethash-or variable state)))))
   
 (defmethod transition ((m dynamic-bayesian-network) moment congruent-states
-		       &key keep (keep-trace? t))
+		       &key intermediate-marginalization? (keep-trace? t))
   "Given each state in CONGRUENT-STATES, rotate it and generate new congruent states 
 given MOMENT. Perform an intermediate marginalization to state variables, then gather 
 all new states together and marginalize again."
-  (let ((observation (observations m moment))
-	(persistent-variables (union (model-variables m) keep)))
+  (let* ((observation (observations m moment))
+	 (additional (if (null intermediate-marginalization?)
+			 (vertices m)
+			 (when (listp intermediate-marginalization?)
+			   intermediate-marginalization?)))
+	 (persist (union (model-variables m) additional)))
     (flet ((generate-moment (state)
 	     (let* ((congruent-states
 		      (generate-moment m observation state)))
 	       (%write-states m congruent-states observation)
-	       (marginalize congruent-states persistent-variables))))
-      (let* ((congruent-states (rotate-states m congruent-states :keep-trace? keep-trace?))
+	       (marginalize congruent-states persist))))
+      (let* ((congruent-states (rotate-states m congruent-states
+					      :keep-trace? keep-trace?
+					      :persist persist))
 	     (congruent-states
 	       (apply #'append (mapcar #'generate-moment congruent-states)))
-	     (congruent-states (marginalize congruent-states persistent-variables))
+	     (congruent-states (marginalize congruent-states persist))
 	     (congruent-states
 	       (if *generate-a-priori-states*
 		   (congruent-states congruent-states observation) 
@@ -743,7 +752,7 @@ all new states together and marginalize again."
     (next-sequence (distribution var) variable-values)))
 
 (defmethod generate-sequence ((m dynamic-bayesian-network) moments
-			  &key keep
+			  &key intermediate-marginalization?
 			    (keep-trace? t)
 			    (write-header? t)
 			    (moment 0)
@@ -756,25 +765,33 @@ congruent by the end of the sequence."
 	(next-sequence (model-variable-distribution m v) congruent-states))
       (let* ((*moment* moment)
 	     (new-congruent-states (transition m (car moments) congruent-states
-					       :keep keep :keep-trace? keep-trace?)))
+					       :intermediate-marginalization?
+					       intermediate-marginalization?
+					       :keep-trace? keep-trace?)))
 	;;(format t "Evidence ~a, prob first con state: ~a n-cong: ~a~%"
 	;;	(evidence m new-congruent-states)
 	;;	(gethash :probability (car new-congruent-states))
 	;;	(length new-congruent-states))
 	(generate-sequence m (cdr moments)
-			   :keep keep
+			   :intermediate-marginalization? intermediate-marginalization?
 			   :write-header? nil
 			   :moment (1+ moment)
 			   :congruent-states new-congruent-states))))
 
+(defun set-state-probability (state probability)
+  (setf (gethash :probability state) probability))
+			      
+(defun state-probability (state)
+  (gethash :probability state))
+
 (defmethod evidence ((m bayesian-network) congruent-states)
-  (gethash :probability
+  (state-probability
 	   (car (marginalize congruent-states (observed-variables m)))))
 
 (defmethod posterior ((m bayesian-network) congruent-states)
   (let ((evidence (evidence m congruent-states)))
     (dolist (state congruent-states congruent-states)
-      (setf (gethash :probability state) (pr:div (gethash :probability state) evidence)))))
+      (set-state-probability state (pr:div (state-probability state) evidence)))))
 			      
 (defmethod %write-header ((m bayesian-network) &optional (output (output m)))
   (let* ((output-var-names
