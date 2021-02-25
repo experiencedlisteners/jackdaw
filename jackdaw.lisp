@@ -463,7 +463,7 @@ VARIABLES is a list of variable definitions."
   "Hide VARIABLES."
   (%set-hidden m t vertices)
   (format *error-output*
-	  "The following variables of ~a are now observed: ~{~a~^, ~}"
+	  "The following variables of ~a are now observed: ~{~a~^, ~}~%"
 	  (type-of m)
 	  (observed-variables m)))
   
@@ -471,7 +471,7 @@ VARIABLES is a list of variable definitions."
   "Make VARIABLES observable."
   (%set-hidden m nil vertices)
   (format *error-output*
-	  "The following variables of ~a are now observed: ~{~a~^, ~}"
+	  "The following variables of ~a are now observed: ~{~a~^, ~}~%"
 	  (type-of m)
 	  (observed-variables m)))
 
