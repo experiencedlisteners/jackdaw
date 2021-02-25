@@ -183,6 +183,7 @@ By default, the default-form will throw an error if the key is not found."
    (vertex :initarg :vertex :reader vertex)
    (output :initarg :output :reader output)
    (distribution :initarg :distribution :accessor distribution :type probability-distribution)
+   (distribution-parents :initarg :distribution-parents :accessor distribution-parents)
    (model :initarg :model :reader model :type bayesian-network)
    (hidden :initarg :hidden :accessor hidden :initform t)
    (observer :initarg :observer :accessor observer)))
@@ -366,7 +367,9 @@ VARIABLES is a list of variable definitions."
 		     (assert (subtypep dist 'probability-distribution) ()
 			     "Distribution argument of the variable ~a (~a) must be of type PROBABILITY-DISTRIBUTION." 
 			     v dist)
-		     `(setf (distribution (model-variable model ',v))
+		     `(setf (distribution-parents (model-variable model ',v))
+			    ',dist-args
+			    (distribution (model-variable model ',v))
 			    (apply #'make-instance ',dist ,dist-params))))))
        (defun ,(intern (format nil "MAKE-~A-MODEL" (symbol-name class)) (symbol-package class))
 	   (,@parameters ,@(unless (member '&key parameters) '(&key)) output output-vars
@@ -573,9 +576,9 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 	     (arguments
 	       (mapcar (lambda (v)
 			 (position (if (horizontal? v) (basename v) v) (vertices m)))
-		       (parents variable)))
+		       (distribution-parents variable)))
 	     (horizontal?
-	      (mapcar (lambda (v) (horizontal? v)) (parents variable))))
+	      (mapcar (lambda (v) (horizontal? v)) (distribution-parents variable))))
 	(labels
 	    ((get-variable-observation (previous current)
 	       (mapcar (lambda (i horizontal?) (elt (if horizontal? previous current) i))
@@ -600,7 +603,7 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 This is just a wrapper for the PROBABILITIES of the variable's distribution.
 It grabs the arguments from the parents
 and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
-  (let ((arguments (mapcar (lambda (v) (gethash v parents-state)) (parents variable))))
+  (let ((arguments (mapcar (lambda (v) (gethash v parents-state)) (distribution-parents variable))))
     (if (equal congruent-values (list +inactive+))
 	(list (pr:in 1))
 	(probabilities (distribution variable)
@@ -755,7 +758,7 @@ all new states together and marginalize again."
 
 (defmethod variable-value ((var random-variable) state)
   (cons (gethash (vertex var) state)
-	(loop for v in (parents var) collect (gethash v state))))
+	(loop for v in (distribution-parents var) collect (gethash v state))))
 
 (defmethod variable-values ((var random-variable) states)
   (unless (null states)

@@ -167,12 +167,12 @@
 		      (/ 2 3))))
 
 (deftest variable-value
-  (let ((variable (make-instance 'random-variable :vertex 'test :parents '(a b))))
+  (let ((variable (make-instance 'random-variable :vertex 'test :distribution-parents '(a b))))
     (test (equal (jackdaw::variable-value variable (plist->hash-table '(test 1 a 2 b 3)))
 		   '(1 2 3)))))
 
 (deftest variable-values
-  (let ((variable (make-instance 'random-variable :vertex 'test :parents '(a b))))
+  (let ((variable (make-instance 'random-variable :distribution-parents '(a b) :vertex 'test)))
     (test (equal (jackdaw::variable-values
 		    variable
 		    (list (plist->hash-table '(test x a y b z))
