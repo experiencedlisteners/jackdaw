@@ -6,7 +6,8 @@
    #:probability-distribution #:bayesian-network #:dynamic-bayesian-network
    #:random-variable
    ;; Evaluating models
-   #:generate #:generate-sequences #:probability
+   #:generate #:generate-sequence #:probability
+   #:generate-congruent-values
    #:probabilities #:domain #:estimate
    ;; Model properties
    #:variables #:observed-variables #:model-variable
@@ -28,7 +29,7 @@
    ;; Congruency constraint utilities
    #:deterministic #:normal
    #:recursive #:persist #:one-shot
-   #:accumulate #:ngram #:chain
+   #:accumulate #:ngram #:chain #:markov
    #:ensure-list #:inactive?
    ;; Serialization utilities
    #:defreader #:defwriter
