@@ -452,11 +452,12 @@ VARIABLES is a list of variable definitions."
   (not (hidden (gethash variable (variables m)))))
 
 (defmethod %set-hidden ((m bayesian-network) hidden vertices)
-  (dolist (v vertices)
-    (let ((variable
-	    (gethash-or v (variables m)
-		       (error "~a is not a variable of ~a" v (type-of m)))))
-      (setf (hidden variable) hidden))))
+  (let ((vertices (if (null vertices) (vertices m) vertices)))
+    (dolist (v vertices)
+      (let ((variable
+	      (gethash-or v (variables m)
+		  (error "~a is not a variable of ~a" v (type-of m)))))
+	(setf (hidden variable) hidden)))))
 
 (defmethod hide ((m bayesian-network) &rest vertices)
   "Hide VARIABLES."
