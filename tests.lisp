@@ -98,6 +98,11 @@
 		:key-test key-test
 		:value-test value-test))
 
+(defun state-lists-equal (a b)
+  (sets-equal (mapcar #'hash-table->plist a)
+	      (mapcar #'hash-table->plist b)
+	      :test #'plists-equal))
+
 
 ;;;;;;;; Unit tests ;;;;;;;;;;;
 
@@ -163,12 +168,12 @@
 
 (deftest variable-value
   (let ((variable (make-instance 'random-variable :vertex 'test :parents '(a b))))
-    (assert (equal (jackdaw::variable-value variable (plist->hash-table '(test 1 a 2 b 3)))
+    (test (equal (jackdaw::variable-value variable (plist->hash-table '(test 1 a 2 b 3)))
 		   '(1 2 3)))))
 
 (deftest variable-values
   (let ((variable (make-instance 'random-variable :vertex 'test :parents '(a b))))
-    (assert (equal (jackdaw::variable-values
+    (test (equal (jackdaw::variable-values
 		    variable
 		    (list (plist->hash-table '(test x a y b z))
 			  (plist->hash-table '(test p a q b r))
@@ -176,6 +181,59 @@
 		   '((x y z)
 		     (p q r)
 		     (u v w))))))
+
+
+(defmodel test-3 (dynamic-bayesian-network) ()
+  ((:a () (uniform ())
+       '(x y)
+       :observer #'first)
+   (:b () (uniform ())
+       '(p q)
+    :observer #'second)))
+
+(defmacro test-state-lists-equal (a b)
+  `(let ((a (mapcar #'hash-table->plist ,a))
+	 (b (mapcar #'hash-table->plist ,b)))
+     (test (sets-equal a b :test #'plists-equal))))
+
+(defmacro test-hash-tables-equal (a b &key (key-test '#'eql)
+					(value-test '#'eql))
+  `(let ((a (hash-table->plist ,a))
+	 (b (hash-table->plist ,b)))
+     (test (plists-equal a b :key-test ,key-test :value-test ,value-test))))
+
+(deftest-with-model transition (test-3)
+  (let ((states
+	  (list (plist->hash-table '(:a x :b p :probability .1))
+		(plist->hash-table '(:a y :b q :probability .2))))
+	(states-2
+	  (list (plist->hash-table '(:a x :b p :trace 'root :probability .2))
+		(plist->hash-table '(:a y :b q :trace 'root :probability .1))))
+	(transitioned-states
+	  (list (plist->hash-table '(:a x :b p :probability .075))
+		(plist->hash-table '(:a y :b p :probability .075))
+		(plist->hash-table '(:a x :b q :probability .075))
+		(plist->hash-table '(:a y :b q :probability .075)))))
+    (test-state-lists-equal
+     (jd:transition model nil states :keep-trace? nil)
+     transitioned-states)
+    (test-state-lists-equal
+     (jd:transition model nil states :keep-trace? nil
+				     :intermediate-marginalization? t)
+     (list (plist->hash-table '(:probability .3))))
+    (test-state-lists-equal
+     (jd:transition model nil states :keep-trace? nil
+				     :intermediate-marginalization? '(:b))
+     (list (plist->hash-table '(:b p :probability .15))
+	   (plist->hash-table '(:b q :probability .15))))
+    (test-hash-tables-equal
+     (gethash :trace (car (jd:transition model nil states
+					 :keep-trace? t :intermediate-marginalization? '(:a))))
+     (plist->hash-table '(:probability .2 :a y :trace nil)))
+        (test-hash-tables-equal
+     (gethash :trace (car (jd:transition model nil states-2
+					 :keep-trace? t :intermediate-marginalization? '(:a))))
+     (plist->hash-table '(:probability .2 :a x :trace 'root)))))
 
 (deftest cpt-alist-parameters
   (let ((d (make-instance 'cpt 
