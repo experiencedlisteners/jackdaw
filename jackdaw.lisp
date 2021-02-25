@@ -802,8 +802,10 @@ congruent by the end of the sequence."
   (state-probability
 	   (car (marginalize congruent-states (observed-variables m)))))
 
-(defmethod posterior ((m bayesian-network) congruent-states)
-  (let ((evidence (evidence m congruent-states)))
+(defun posterior (congruent-states)
+  "Same as dividing normalizing the congruent states."
+  (let* ((probabilities (mapcar #'state-probability congruent-states))
+	 (evidence (apply #'+ probabilities)))
     (dolist (state congruent-states congruent-states)
       (set-state-probability state (pr:div (state-probability state) evidence)))))
 			      
