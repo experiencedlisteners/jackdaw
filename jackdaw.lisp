@@ -785,7 +785,7 @@ congruent by the end of the sequence."
   (when write-header? (%write-header m))
   (if (null moments)
       (dolist (v (vertices m) congruent-states)
-	(next-sequence (model-variable-distribution m v) congruent-states))
+	(next-sequence (model-variable m v) congruent-states))
       (let* ((*moment* moment)
 	     (new-congruent-states (transition m (car moments) congruent-states
 					       :intermediate-marginalization?
