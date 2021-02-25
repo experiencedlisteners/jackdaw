@@ -242,9 +242,8 @@ given :X, return $X"
 (defun basename (s)
   "Given an a priori version of a variable name, return its
 stem. For example, if S is ^X, (BASENAME S) is X."
-  (assert (horizontal? s) ()
-	  "Basename ~a not defined, must be horizontal dependency." s)
-  (intern (subseq (symbol-name s) 1) (symbol-package s)))
+  (if (not (horizontal? s)) s
+      (intern (subseq (symbol-name s) 1) (symbol-package s))))
 
 (defmethod horizontal-edges ((m dynamic-bayesian-network) vertex)
   "Return those of dependencies of VERTEX in M that are 
@@ -313,6 +312,11 @@ VARIABLES is a list of variable definitions."
 			     (formatter '#'identity) (hidden t))
 	  variable
 	(setf (gethash v edges) parents)
+	(assert (subsetp (mapcar #'basename parents) vertices) ()
+		"The parents {~{~a~^, ~}} of ~a are no known variables of ~a"
+		(set-difference (mapcar #'basename parents) vertices)
+		v class)
+	
 	(push distribution dist-specs)
 	(push (list observer formatter hidden) var-specs)
 	(push 
