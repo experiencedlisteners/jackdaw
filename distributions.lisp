@@ -261,7 +261,11 @@ The context of a parameter is (CDR PROB), and corresponds to a list of states
 corresponding to variables that D is conditioned on. If D is not conditioned 
 on anything, the context may be set to NIL. This means that each parameter 
 must be a list of length 1 (the CDR of which is NIL)."
-  (setf (slot-value d 'cpt) (alist->hash-table alist-cpt)))
+  (setf (slot-value d 'cpt) (alist->hash-table alist-cpt))
+  (setf (slot-value d 'domain)
+	(remove-duplicates
+	 (loop for param being each hash-key of (cpt d) collect (car param))
+	 :test #'equal)))
 
 (defmethod spawn-ppm ((d ppms))
   "Create a PPM model with the parameter settings stored in D."
