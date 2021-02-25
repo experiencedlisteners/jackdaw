@@ -861,12 +861,23 @@ congruent by the end of the sequence."
 			(list (vertex var) 'probability))))
     (cons header (probability-table (distribution var)))))
 
-(defun state-probability-table (states)
-  (let* ((variables (unless (null states)
-		      (loop for key being each hash-key of (car states)
-			    if (not (member key '(:probability :trace)))
-			      collect key)))
+(defun state-probability-table (states &key variables sort)
+  (let* ((states-variables
+	   (unless (null states)
+	     (loop for key being each hash-key of (car states)
+		   if (not (member key '(:probability :trace)))
+		     collect key)))
+	 (variables (if (null variables) states-variables
+			(if (subsetp variables states-variables)
+			    variables
+			    (progn
+			      (warn "Variables not found in state: ~a"
+				    (set-difference states-variables variables))
+			      variables))))
 	 (header (append variables (list :probability)))
+	 (states (if  (not (null sort))
+		      (sort states #'< :key (lambda (s) (gethash :probability s)))
+		      states))
 	 (table))
     (dolist (state states)
       (push (loop for key in (append variables (list :probability))
