@@ -69,7 +69,7 @@ Estimators estimate the parameters of a distribution based on a set of observati
 	   `(dolist (observation sequence)
 	      (let (,@(unless (null symbol) `((,symbol (car observation))))
 		    ,@(unless (null arguments) `((,arguments (cdr observation)))))
-		,@observation-handler)))
+		,observation-handler)))
 	 (sequence-handler-code
 	   `(dolist (sequence ,data)
 	      ,@(unless (null sequence-handler) (list sequence-handler))
@@ -115,11 +115,12 @@ attempting to access probabilities." p (type-of d)))))
     ((p (/ count total-count))
      (psymbol psymbol))
   :observation-handler
-  ((incf total-count)
-   (when (not (null arguments))
-     (warn "Arguments defined for Bernouilli distribution but these are ignored."))
-   (when (equal symbol psymbol)
-     (incf count))))
+  (progn
+    (incf total-count)
+    (when (not (null arguments))
+      (warn "Arguments defined for Bernouilli distribution but these are ignored."))
+    (when (equal symbol psymbol)
+      (incf count))))
 
 (defdistribution uniform () () () 1) ;; probabilities are normalized automatically
 (defestimator uniform () () () ())
@@ -152,12 +153,13 @@ attempting to access probabilities." p (type-of d)))))
 	cpt))
      (domain domain))
   :observation-handler
-  ((unless (member symbol domain :test #'equal)
-     (push symbol domain))
-   (setf (gethash (cons symbol arguments) counts)
-	 (1+ (gethash (cons symbol arguments) counts 0)))
-   (setf (gethash arguments context-counts)
-	 (1+ (gethash arguments context-counts 0)))))
+  (progn
+    (unless (member symbol domain :test #'equal)
+      (push symbol domain))
+    (setf (gethash (cons symbol arguments) counts)
+	  (1+ (gethash (cons symbol arguments) counts 0)))
+    (setf (gethash arguments context-counts)
+	  (1+ (gethash arguments context-counts 0)))))
 
 (defestimator ppm:ppm (data model) () () ()
 	      :dataset-handler
