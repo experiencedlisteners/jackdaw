@@ -452,11 +452,19 @@ VARIABLES is a list of variable definitions."
 
 (defmethod hide ((m bayesian-network) &rest vertices)
   "Hide VARIABLES."
-  (%set-hidden m t vertices))
+  (%set-hidden m t vertices)
+  (format *error-output*
+	  "The following variables of ~a are now observed: ~{~a~^, ~}"
+	  (type-of m)
+	  (observed-variables m)))
   
 (defmethod observe ((m bayesian-network) &rest vertices)
   "Make VARIABLES observable."
-  (%set-hidden m nil vertices))
+  (%set-hidden m nil vertices)
+  (format *error-output*
+	  "The following variables of ~a are now observed: ~{~a~^, ~}"
+	  (type-of m)
+	  (observed-variables m)))
 
 (defmethod model-variable ((m bayesian-network) vertex)
   (gethash-or vertex (variables m)))
