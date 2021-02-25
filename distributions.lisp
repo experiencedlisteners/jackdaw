@@ -1,18 +1,17 @@
 (cl:in-package #:jackdaw)
-
 (defun hash-table->alist (hashtab &key (key #'identity) (value #'identity))
   (let ((alist '()))
     (maphash #'(lambda (k v)
-		 (setq alist
-		       (cons (list (funcall key k)
-				   (funcall value v))
-			     alist)))
+		 (push (cons (funcall key k)
+			     (funcall value v))
+		       alist))
              hashtab)
     alist))
 
 (defun alist->hash-table (alist &key (test #'equal))
   (let ((hashtable (make-hash-table :test test)))
-    (mapc #'(lambda (x) (setf (gethash (car x) hashtable) (cadr x)))
+    (mapc #'(lambda (x)
+	      (setf (gethash (car x) hashtable) (cdr x)))
           alist)
     hashtable))
 
