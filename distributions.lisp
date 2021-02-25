@@ -132,6 +132,17 @@ attempting to access probabilities." p (type-of d)))))
 	  "Variable with deterministic distribution must have exactly one congruent state.")
   (call-next-method))
 
+(defdistribution ngram-model () (&key (cpt (make-cpt-distribution))) (symbol)
+  (probability cpt symbol))
+
+(defestimator ngram-model (data dist) (observation)
+	      ((cpt-dataset))
+	      ((cpt (estimate (cpt dist) (print cpt-dataset))))
+	      :sequence-handler
+	      (push nil cpt-dataset)
+	      :observation-handler
+	      (push observation (car cpt-dataset)))
+
 (defdistribution cpt () (&key domain (cpt (make-hash-table))) (symbol args)
   (multiple-value-bind (p found?)
       (gethash (cons symbol args) cpt)
@@ -199,7 +210,7 @@ Which PPM model is used depends on the values of the variables conditioned on.")
     (push (reverse observation-sequence) (gethash context datasets))))
 
 (defwriter probability-distribution (m)
-	   (loop for s in (%parameters m) collect (slot-value m s)))		 
+  (loop for s in (%parameters m) collect (slot-value m s)))
 (defreader probability-distribution (m data)
   (loop for v in data for s in (%parameters m)
 	collect (slot-value m s)))
