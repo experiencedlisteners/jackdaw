@@ -664,17 +664,23 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 	(dolist (state (generate variable observation parent-state))
 	  (push state new-states))))))
 
-(defun make-marginal-state (variables values trace)
+(defun make-marginal-state (variables values &optional trace)
   (let ((state (make-hash-table)))
-    (setf (gethash :trace state) trace)
+    (unless (null trace)
+      (setf (gethash :trace state) trace))
     (loop for variable in variables for value in values do
       (setf (gethash variable state) value))
     state))
 
-(defun update-marginal-state (marginal-state p)
-  (let ((state-p (gethash :probability marginal-state)))
-    (setf (gethash :probability marginal-state)
-	  (apply #'pr:add (cons p (when state-p (list state-p)))))
+(defun update-marginal-state (marginal-state p &optional trace)
+  (let ((state-p (state-probability marginal-state)))
+    (unless (null trace)
+      (let ((current-trace-p (state-probability (gethash :trace marginal-state)))
+	    (new-trace-p (state-probability trace)))
+      (when (> new-trace-p current-trace-p)
+	(setf (gethash :trace marginal-state) trace))))
+    (set-state-probability marginal-state
+     (apply #'pr:add (cons p (when state-p (list state-p)))))
     marginal-state))
 
 (defun marginalize (states variables)
@@ -686,8 +692,8 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 	     (marginal-state (gethash-or values marginal
 				 (make-marginal-state variables values
 						      trace)))
-	     (probability (gethash :probability state))
-	     (new-state (update-marginal-state marginal-state probability)))
+	     (probability (state-probability state))
+	     (new-state (update-marginal-state marginal-state probability trace)))
 	(setf (gethash values marginal) new-state)))
     (hash-table-values marginal)))
 
