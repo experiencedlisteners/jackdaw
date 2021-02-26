@@ -26,7 +26,7 @@
     (mapcar (lambda (s) (cons s ,^self)) ,constraint)
     (mapcar #'list ,(or initialization-constraint constraint))))
 
-(defmacro markov (^self order constraint &optional initialization-constraint)
+(defmacro markov (order ^self constraint &optional initialization-constraint)
   `(recursive
     ,^self
     (let ((order (if (null ,order) (length ,^self)
