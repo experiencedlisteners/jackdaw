@@ -15,49 +15,49 @@ This model is based closely on the model described by [Van der Weij, Pearce, and
 ```common-lisp
 (ql:quickload "jackdaw")
 
-(jackdaw::defdistribution meter
-    (jackdaw::cpt) (correction-factor) (meter)
+(jd::defdistribution meter
+    (jd::cpt) (correction-factor) (meter)
   (pr:mul correction-factor (car meter)
 	  (call-next-method)))
 
-(jackdaw::defestimator
+(jd::defestimator
     meter (data distribution) (meter) ()
     ((correction-factor 
       (progn 
 	(call-next-method distribution data)
 	(apply #'pr:add 
 	       (loop
-		 for symbol in (jackdaw:domain distribution) 
-		 collect (jackdaw:probability
+		 for symbol in (jd:domain distribution) 
+		 collect (jd:probability
 			  distribution
 			  (cons symbol nil))))))))
 
-(jackdaw:defmodel rhythm (jackdaw:dynamic-bayesian-network)
+(jd:defmodel rhythm (jd:dynamic-bayesian-network)
   (ioi-domain meter-domain)
   ((M                    ; meter
       (^m)
-      (jackdaw:cpt ())   ; conditional probability table
-      (jackdaw:persist $^m meter-domain))
+      (jd:cpt ())   ; conditional probability table
+      (jd:persist $^m meter-domain))
    (D                    ; downbeat distance
       (^d ^p m)
-      (jackdaw:ppms (m)) ; set of PPM sequence models
-      (jackdaw:chain (loop for ioi in ioi-domain
+      (jd:ppms (m)) ; set of PPM sequence models
+      (jd:chain (loop for ioi in ioi-domain
 			   collect (cons (+ $^p ioi)
-					 (jackdaw:ensure-list $^d)))
+					 (jd:ensure-list $^d)))
 		     $^p))
    (P0                   ; initial phase (or pickup interval)
        (^p0 m)
-       (jackdaw:uniform ())
-       (jackdaw:persist $^p0 (loop for p below (car $m) collect p)))
+       (jd:uniform ())
+       (jd:persist $^p0 (loop for p below (car $m) collect p)))
    (P                    ; phase
       (^p p0 m d)
-      (jackdaw:uniform ())
-      (jackdaw:recursive $^p (list (mod (car $d) (car $m)))
+      (jd:uniform ())
+      (jd:recursive $^p (list (mod (car $d) (car $m)))
 			 (list $p0)))
    (I                    ; inter-onset interval
       (d ^p ^i)
-      (jackdaw:uniform ())
-      (if (jackdaw:inactive? $d) (list jackdaw:+inactive+)
+      (jd:uniform ())
+      (if (jd:inactive? $d) (list jd:+inactive+)
 	  (list (- (car $d) $^p))))))
 ```
 
@@ -74,13 +74,14 @@ We can use the REPL to instantiate, estimate, and query the model.
 Instantiating the model could be done as follows.
 
 ```common-lisp
-JACKDAW> (defparameter *model*
-           (make-instance 'rhythm
-                          :ioi-domain '(1 2 3 4)
-                          :meter-domain '((8 4) (6 4) (6 8))
-                          :p0-observer #'first
-                          :m-observer (lambda (m) (list (second m) (third m)))
-                          :i-observer (lambda (m) (if (listp m) (fourth m) m))))
+CL-USER> (jd:defparameter
+          *model*
+          (make-instance 'rhythm
+                         :ioi-domain '(1 2 3 4)
+                         :meter-domain '((8 4) (6 4) (6 8))
+                         :p0-observer #'first
+                         :m-observer (lambda (m) (list (second m) (third m)))
+                         :i-observer (lambda (m) (if (listp m) (fourth m) m))))
 ````
 
 We have to provide values for the model's two parameters: `IOI-DOMAIN` and `METER-DOMAIN`.
@@ -91,19 +92,27 @@ In order to estimate the model, let's create some toy data.
 First, we'll create a utility function for annotating sequences of IOIs with metrical information.
 
 ```common-lisp
-(defun annotate (iois meter phase-0)
+(defun rhythm (iois &optional meter phase-0)
   "Utility function for annotating a list of IOIs with initial phase and meter."
-  (loop for ioi in iois collect (cons phase-0 (append meter (list ioi)))))
+  (flet ((annotate (ioi)
+	   (cond ((and (null meter) (null phase-0))
+		  ioi)
+		 ((null phase-0)
+		  (error "Providing only a meter and no initial phase is not allowed"))
+		 (t
+		  (cons phase-0 (append meter (list ioi)))))))
+    (mapcar #'annotate (cons jd:+inactive+ iois))))
 ```
 
 Now, we can easily jot down some data and estimate the model.
 
 ```common-lisp
-JACKDAW> (let ((data (list (annotate (list jackdaw:+inactive+ 4 2 2 4 1 1 1 1 4) '(8 4) 0)
-                           (annotate (list jackdaw:+inactive+ 3 1 1 1 2 1 3 3) '(6 8) 0)
-                           (annotate (list jackdaw:+inactive+ 2 1 1 2 2 1 1 2 2 2 2 1 1 4) '(6 4) 0))))
-           (jackdaw:observe *model* 'i 'm 'p0)
-           (jackdaw:estimate *model* data))
+CL-USER> (let ((data (list (rhythm '(4 2 2 4 1 1 1 1 4)           '(8 4) 0)
+                           (rhythm '(3 1 1 1 2 1 3 3)             '(6 8) 0)
+                           (rhythm '(2 1 1 2 2 1 1 2 2 2 2 1 1 4) '(6 4) 0))))
+           (jd:hide *model*) ; hide the entire model
+           (jd:observe *model* 'i 'm 'p0)  ; configure I and M to be observed in *MODEL*
+           (jd:estimate *model* data)) ; estimate the model from the data
 ```
 
 Above, we first used `OBSERVE` to make the variables `I`, `M`, and `P0` of the model observable.
@@ -113,29 +122,29 @@ Then we used `ESTIMATE` to estimate the model from the data
 The following illustrates how the model instance can be queried on the REPL.
 
 ```common-lisp
-JACKDAW> (jackdaw:hide *model* 'm 'p0)
+CL-USER> (jd:hide *model*) ; hide all variables
 NIL
-JACKDAW> (jackdaw:probability *model* (list jackdaw:+inactive+ 1))
-0.3149437
+CL-USER> (jd:observe *model* 'i) ; observe inter-onset interval
+NIL
+CL-USER> (jd:probability *model* (rhythm '(1)))
+0.31908745
 T
-JACKDAW> (ql:quickload "cl-ansi-term")
+CL-USER> (ql:quickload "cl-ansi-term") ; for nice output formatting
 ...
-JACKDAW> (term:table 
-          (jackdaw:state-probability-table
-           (jackdaw:marginalize 
-            (jackdaw:posterior
-             *model*
-             (jackdaw:generate *model* (list jackdaw:+inactive+ 4 2 2 4)))
-            '(m))
-           'm) :column-width 12)
+CL-USER> (term:table 
+          (jd:state-probability-table
+           (jd:marginalize 
+            (jd:posterior
+             (jd:generate *model* (rhythm '(4 2 2 4))))
+           '(m))) :column-width 12)
 +-----------+-----------+
 |M          |PROBABILITY|
 +-----------+-----------+
-|(8 4)      |0.7602281  |
+|(8 4)      |0.7039645  |
 +-----------+-----------+
-|(6 4)      |0.19581781 |
+|(6 4)      |0.24176745 |
 +-----------+-----------+
-|(6 8)      |0.043954067|
+|(6 8)      |0.0542681  |
 +-----------+-----------+
 NIL
 ```
