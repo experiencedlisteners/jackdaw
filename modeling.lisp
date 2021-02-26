@@ -29,8 +29,14 @@
 (defmacro markov (order ^self constraint &optional initialization-constraint)
   `(recursive
     ,^self
-    (let ((order (if (null ,order) (length ,^self)
-		     (min (length ,^self) ,order))))
+    (let ((order ,(cond
+		    ((numberp order)
+		     `(min (length ,^self) ,order))
+		    ((null order)
+		     `(length ,^self))
+		    (t
+		     `(if (null ,order) (length ,^self)
+			  (min (length ,^self) ,order))))))
       (mapcar (lambda (s) (cons s (subseq ,^self 0 order))) ,constraint))
     (mapcar #'list ,(or initialization-constraint constraint))))
 
