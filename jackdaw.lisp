@@ -571,7 +571,7 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 ;;(defmethod estimate ((m bayesian-network) dataset)
 
 (defmethod estimate ((m dynamic-bayesian-network) dataset)
-  (format *error-output* "generating observations")
+  (format *error-output* "Generating observations~%")
   (let* ((dataset (estimation-dataset m dataset)))
     (dotimes (vertex-index (order m) m)
       (let* ((v (elt (vertices m) vertex-index))
@@ -593,9 +593,9 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 	       (loop for (previous current) on (cons root sequence) by #'cdr
 		     repeat (length sequence)
 		     collect (get-variable-observation previous current))))
-	  (format *error-output* "converting data to observations of ~a" v)
+	  (format *error-output* "Converting data to observations of ~a~%" v)
 	  (let ((dataset (mapcar #'get-observation-sequence dataset)))
-	    (format *error-output* "estimating ~a" v)
+	    (format *error-output* "Estimating ~a~%" v)
 	    ;;(print v)
 	    ;;(print dataset)
 	    (estimate distribution dataset)))))))
