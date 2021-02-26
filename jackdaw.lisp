@@ -707,14 +707,14 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
     (hash-table-values marginal)))
 
 (defmethod rotate-states ((m dynamic-bayesian-network) states
-			  &key (keep-trace? t)
+			  &key (keep-trace? nil)
 			    (persist (model-variables m)))
   (unless (null states)
     (cons (rotate-state m (car states) :keep-trace? keep-trace? :persist persist)
 	  (rotate-states m (cdr states) :keep-trace? keep-trace? :persist persist))))
 
 (defmethod rotate-state ((m dynamic-bayesian-network) state
-			 &key (keep-trace? t)
+			 &key (keep-trace? nil)
 			 (persist (model-variables m)))
   "\"Rotate\" a state. In  rotated (a priori) version of a state, every parameter
 X is renamed ^X and variables of the form ^X in STATE are dropped.
@@ -732,7 +732,7 @@ values, their probability and the previous trace."
 	    (gethash-or variable state)))))
   
 (defmethod transition ((m dynamic-bayesian-network) moment congruent-states
-		       &key intermediate-marginalization? (keep-trace? t))
+		       &key intermediate-marginalization? (keep-trace? nil))
   "Given each state in CONGRUENT-STATES, rotate it and generate new congruent states 
 given MOMENT. Perform an intermediate marginalization to state variables, then gather 
 all new states together and marginalize again."
@@ -776,7 +776,7 @@ all new states together and marginalize again."
 
 (defmethod generate-sequence ((m dynamic-bayesian-network) moments
 			  &key intermediate-marginalization?
-			    (keep-trace? t)
+			    (keep-trace? nil)
 			    (write-header? t)
 			    (moment 0)
 			    (congruent-states (list (make-root-state m))))
