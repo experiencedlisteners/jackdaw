@@ -21,9 +21,11 @@
    #:state-probability-table #:trace-back
    #:marginalize
    #:pprint-state 
-   ;; Probability distributions
+   ;; Probability distributions API
    #:probability #:estimate
+   ;; Probability distributions
    #:bernouilli #:cpt #:ppms #:uniform
+   #:ngram-model
    ;; Model definition tools
    #:defmodel #:defdistribution #:defestimator
    ;; Congruency constraint utilities
