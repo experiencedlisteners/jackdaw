@@ -1,4 +1,5 @@
 (cl:in-package #:jackdaw)
+
 (defun hash-table->alist (hashtab &key (key #'identity) (value #'identity))
   (let ((alist '()))
     (maphash #'(lambda (k v)
@@ -124,13 +125,6 @@ attempting to access probabilities." p (type-of d)))))
 
 (defdistribution uniform () () () 1) ;; probabilities are normalized automatically
 (defestimator uniform () () () ())
-
-(defdistribution deterministic () () () 1)
-(defestimator deterministic () () () ())
-(defmethod probabilities ((d deterministic) parents-state  congruent-states)
-  (assert (eq (length congruent-states) 1) ()
-	  "Variable with deterministic distribution must have exactly one congruent state.")
-  (call-next-method))
 
 (defdistribution ngram-model () (&key (cpt (make-cpt-distribution))) (symbol)
   (probability cpt symbol))
