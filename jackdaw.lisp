@@ -400,7 +400,7 @@ VARIABLES is a list of variable definitions."
 		    :hidden hidden
 		    :vertex v :observer (eval observer) :output (eval formatter))))
     (setf (slot-value model 'variables) variables))
-  (apply #'observe (cons model observe)))
+  (unless (null observe) (apply #'observe (cons model observe))))
 
 ;; Model serialization
 
