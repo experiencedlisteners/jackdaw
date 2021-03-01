@@ -123,24 +123,31 @@ attempting to access probabilities." p (type-of d)))))
     (when (equal symbol psymbol)
       (incf count))))
 
-(defdistribution uniform () () () 1) ;; probabilities are normalized automatically
+(defdistribution uniform (conditional-probability-distribution)
+    () () 1) ;; probabilities are normalized automatically
 (defestimator uniform () () () ())
 
-(defdistribution ngram-model () (&key (cpt (make-cpt-distribution))) (symbol)
-  (probability cpt symbol))
+(defdistribution ngram-model (conditional-probability-distribution)
+    (&key (cpt (make-cpt-distribution))) (symbol arguments)
+  "Observations of an ngram model are of the form (NGRAM . ARGUMENTS), where 
+NGRAM is of the form (Xn Xn-1 ... X0). In the body of this definition, NGRAM is 
+bound to SYMBOL and ARGUMENTS to ARGUMENTS."
+  (probability cpt (append symbol arguments)))
 
-(defestimator ngram-model (data dist) (observation)
+(defestimator ngram-model (data dist) (observation arguments)
 	      ((cpt-dataset))
 	      ((cpt (estimate (cpt dist) (print cpt-dataset))))
 	      :sequence-handler
 	      (push nil cpt-dataset)
 	      :observation-handler
-	      (push observation (car cpt-dataset)))
+	      (push (append observation arguments)
+		    (car cpt-dataset)))
 
-(defdistribution cpt () (&key domain (cpt (make-hash-table))) (symbol args)
+(defdistribution cpt (conditional-probability-distribution)
+    (&key domain (cpt (make-hash-table))) (symbol args)
+  "A conditional probability table."
   (multiple-value-bind (p found?)
       (gethash (cons symbol args) cpt)
-    ;;(format t "P~w = ~a~%" (cons symbol args) (gethash (cons symbol args) cpt))
     (unless found?
       (warn "Probability of ~a given ~a not found in conditional probability table." symbol args))
     p))
@@ -170,7 +177,7 @@ attempting to access probabilities." p (type-of d)))))
 	      :dataset-handler
 	      (ppm:model-dataset model data :construct? t :predict? nil))
 
-(defclass ppms (probability-distribution)
+(defclass ppms (conditional-probability-distribution)
   ((alphabet :reader alphabet :initform nil)
    (escape :initarg :escape :reader escape :initform :c)
    (mixtures :initarg :mixtures :reader mixtures :initform t)
@@ -323,21 +330,32 @@ this means that either "
     model))
 
 
-(defmethod probabilities ((d probability-distribution) arguments congruent-values)
-  "Obtain the probabilities of a list of congruent values given arguments."
-  (mapcar (lambda (s) (probability d (cons s arguments)))
+(defmethod conditional-probability ((d probability-distribution) observation
+				    &optional arguments)
+  (declare (ignore arguments))
+  (probability d observation))
+
+(defmethod conditional-probability ((d conditional-probability-distribution) observation
+				    &optional arguments)
+  (probability d (cons observation arguments)))
+
+(defmethod conditional-probabilities ((d probability-distribution) congruent-values
+				      &optional arguments)
+  "Obtain the probabilities of a list of possible values given arguments."
+  (mapcar (lambda (val) (conditional-probability d val arguments))
 	  congruent-values))
 	      
-(defmethod probabilities ((d ppms) arguments congruent-values)
+(defmethod conditional-probabilities ((d ppms) possible-values
+				      &optional arguments)
   "Obtain the location object of the appropriate PPM model given context.
 Context is obtained by accessing the previous self of the current variable, 
 which if the current variable is an accumulator, must represent the context.
 Note that PARENTS-STATE represents a state in the current moment in which any
 parent variables are instantiated."
-  (let* ((context (cdr (car congruent-values)))
+  (let* ((context (cdr (car possible-values)))
 	 (model (get-model d arguments))
 	 (location (get-location d model context arguments))
-	 (alphabet (mapcar #'car congruent-values)))
+	 (alphabet (mapcar #'car possible-values)))
     (ppm:set-alphabet model alphabet)
     (mapcar (lambda (item) (pr:in (cadr item)))
 	    (ppm::get-distribution model location))))

@@ -2,8 +2,19 @@
   (:use #:common-lisp)
   (:nicknames :jd)
   (:export
-   ;; Top-level classes
-   #:probability-distribution #:bayesian-network #:dynamic-bayesian-network
+   ;; Probability distributions
+   #:probability-distribution
+   #:conditional-probability-distribution
+   #:ngram-model #:make-ngram-model-distribution
+   #:bernouilli #:make-bernouilli-distribution
+   #:cpt #:make-cpt-distribution
+   #:ppms #:make-ppms-distribution
+   #:uniform #:make-uniform-distribution
+   ;; Probability distributions API
+   #:probability #:conditional-probability
+   #:conditional-probabilities #:estimate
+   ;; Bayesian networks
+   #:bayesian-network #:dynamic-bayesian-network
    #:random-variable
    ;; Evaluating models
    #:generate #:generate-sequence #:probability
@@ -21,11 +32,6 @@
    #:state-probability-table #:trace-back
    #:marginalize
    #:pprint-state 
-   ;; Probability distributions API
-   #:probability #:estimate
-   ;; Probability distributions
-   #:bernouilli #:cpt #:ppms #:uniform
-   #:ngram-model
    ;; Model definition tools
    #:defmodel #:defdistribution #:defestimator
    ;; Congruency constraint utilities
@@ -170,6 +176,8 @@ By default, the default-form will throw an error if the key is not found."
 
 (defclass probability-distribution ()
   ((%parameters :reader %parameters :initform nil)))
+
+(defclass conditional-probability-distribution (probability-distribution) ())
 
 (defclass bayesian-network (probability-distribution dag)
   ((%var-specs :allocation :class :type list)
@@ -605,7 +613,8 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 (defmethod probability ((m bayesian-network) observation)
   (evidence m (generate m observation)))
 
-(defmethod probabilities ((variable random-variable) parents-state congruent-values)
+(defmethod conditional-probabilities ((variable random-variable) congruent-values
+				      &optional parents-state)
   "Obtain the probabilities of a list of CONGRUENT-VALUES of VARIABLE.
 This is just a wrapper for the PROBABILITIES of the variable's distribution.
 It grabs the arguments from the parents
@@ -613,8 +622,8 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
   (let ((arguments (mapcar (lambda (v) (gethash v parents-state)) (distribution-parents variable))))
     (if (equal congruent-values (list +inactive+))
 	(list (pr:in 1))
-	(probabilities (distribution variable)
-		       arguments congruent-values))))
+	(conditional-probabilities (distribution variable)
+				   congruent-values arguments))))
 
 (defmethod descr ((m bayesian-network))
   (format nil "~a model" (symbol-name (type-of m))))
@@ -650,7 +659,7 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 			   vertex value parent-state)))
       (if *estimate?*
 	  (mapcar #'branch-state congruent-values)
-	  (let* ((probabilities (probabilities variable parent-state congruent-values))
+	  (let* ((probabilities (conditional-probabilities variable congruent-values parent-state))
 		 (probabilities (if hidden? (normalize probabilities)
 				    probabilities)))
 	    (mapcar #'branch-state congruent-values probabilities))))))
