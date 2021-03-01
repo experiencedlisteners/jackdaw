@@ -62,35 +62,31 @@ conditioned, and the distribution instance itself."
 (defmacro defestimator (distribution (&optional data distribution-symbol)
 			(&optional symbol arguments)
 			binding-spec parameter-setters
-			&key dataset-handler sequence-handler observation-handler)
+			&key dataset-handler observation-handler)
   "Define an estimator of DISTRIBUTION.
 
 Estimators estimate the parameters of a distribution based on a set of observations."
   (let* ((observation-handler-code
-	   `(dolist (observation sequence)
+	   `(dolist (observation data)
 	      (let (,@(unless (null symbol) `((,symbol (car observation))))
 		    ,@(unless (null arguments) `((,arguments (cdr observation)))))
 		,observation-handler)))
-	 (sequence-handler-code
-	   `(dolist (sequence ,data)
-	      ,@(unless (null sequence-handler) (list sequence-handler))
-	      ,@(unless (null observation-handler)
-		 (list observation-handler-code))))
 	 (dataset-handler-code
 	   `(,@(unless (null dataset-handler) (list dataset-handler))
-	     ,@(unless (and (null sequence-handler)
-			   (null observation-handler))
-		(list sequence-handler-code)))))
+	     ,@(unless (null observation-handler)
+		 (list observation-handler-code)))))
     `(defmethod estimate ((d ,distribution) data)
        (let (,@binding-spec
 	     ,@(unless (null data) `((,data data)))
 	     ,@(unless (null distribution-symbol) `((,distribution-symbol d))))
-	 ,@(unless (every #'null (list dataset-handler sequence-handler observation-handler))
+	 ,@(unless (every #'null (list dataset-handler observation-handler))
 	    dataset-handler-code)
 	 ,@(loop for (parameter setter) in parameter-setters collect
 		 `(setf (slot-value d ',parameter)
 			,setter)))
        d)))
+
+;;;;;;;;;;;;;;; PROBABILITY API ;;;;;;;;;;;;;;
 
 (defmethod probability :before ((d probability-distribution) observation)
   (dolist (p (slot-value d '%parameters))
@@ -102,7 +98,7 @@ attempting to access probabilities." p (type-of d)))))
 (defmethod conditional-probability ((d probability-distribution) observation
 				    &optional arguments)
   (declare (ignore arguments))
-  (probability d observation))
+  (probability d (list observation)))
 
 (defmethod conditional-probability ((d conditional-probability-distribution) observation
 				    &optional arguments)
@@ -127,7 +123,7 @@ attempting to access probabilities." p (type-of d)))))
       (- 1 p)))
 
 (defestimator bernouilli (data) (symbol arguments)
-    ((psymbol (car (car (car data))))
+    ((psymbol (car (car data)))
      (total-count 0)
      (count 0))
     ((p (/ count total-count))
@@ -191,7 +187,7 @@ must be a list of length 1 (the CDR of which is NIL)."
   (setf (slot-value d 'domain)
 	(remove-duplicates
 	 (loop for param being each hash-key of (cpt d) collect (car param))
-	 :test #'equal))
+	 :test #'equal)))
 
 (defmethod probability-table ((d cpt))
   (let* ((table))
@@ -211,12 +207,10 @@ bound to SYMBOL and ARGUMENTS to ARGUMENTS."
 
 (defestimator ngram-model (data dist) (observation arguments)
 	      ((cpt-dataset))
-	      ((cpt (estimate (cpt dist) (print cpt-dataset))))
-	      :sequence-handler
-	      (push nil cpt-dataset)
+	      ((cpt (estimate (cpt dist) cpt-dataset)))
 	      :observation-handler
-	      (push (append observation arguments)
-		    (car cpt-dataset)))
+	      (push (append observation arguments) cpt-dataset))
+  
 
 ;;;;;;;;;;;;;;;;;;; IDYOM PPM ;;;;;;;;;;;;;;;;
 
@@ -244,31 +238,24 @@ Which PPM model is used depends on the values of the variables conditioned on.")
 	 (context (cdr value))
 	 (model (get-model d arguments))
 	 (location (get-location d model context arguments))
-	 (alphabet (mapcar #'car congruent-values))
 	 (distribution (ppm::get-distribution d location)))
     (find value distribution :key #'car :test #'equal)))
 
-(defestimator ppms (data) (symbol arguments)
-  ((ppms (make-hash-table :test #'equal))
-   (datasets (make-hash-table :test #'equal)))
-  ((ppms (progn
-	   (maphash (lambda (context data)
-		      (let ((ppm (spawn-ppm d)))
-			(estimate ppm data)
-			(setf (gethash context ppms) ppm)))
-		    datasets)
-	  ppms)))
-  :sequence-handler
-  (let ((context (cdr (car sequence)))
-	(observation-sequence))
-    (dolist (observation sequence)
-      (when (not (equal (cdr observation) context))
-	(error "Context change within a sequences not allowed for a sequence model."))
-      (unless (inactive? (car observation)) (push (caar observation) observation-sequence)))
-    ;;(print (coerce (reverse observation-sequence) 'string))
-    (when (null	(gethash context datasets))
-      (setf (gethash context datasets) nil))
-    (push (reverse observation-sequence) (gethash context datasets))))
+(defestimator ppms (data) (value arguments)
+	      ((ppms (make-hash-table :test #'equal))
+	       (datasets (make-hash-table :test #'equal)))
+	      ((ppms (progn
+		       (maphash (lambda (context data)
+				  (let ((ppm (spawn-ppm d)))
+				    (estimate ppm data)
+				    (setf (gethash context ppms) ppm)))
+				datasets)
+		       ppms)))
+	      :observation-handler
+	      (progn
+		(when (null (gethash arguments datasets))
+		  (setf (gethash arguments datasets) nil))
+		(push (reverse value) (gethash arguments datasets))))
 
 (defwriter ppm:ppm (m)
     (list :leaves (utils:hash-table->alist (ppm::ppm-leaves m))
@@ -307,7 +294,7 @@ Which PPM model is used depends on the values of the variables conditioned on.")
 	    (arguments (car pair)))
 	(deserialize model s)
 	;; Store a ppm
-	(setf (gethash arguments (ppms d)) model))))))
+	(setf (gethash arguments (ppms d)) model)))))
 
 (defmethod spawn-ppm ((d ppms))
   "Create a PPM model with the parameter settings stored in D."

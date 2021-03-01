@@ -608,7 +608,8 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 		     repeat (length sequence)
 		     collect (get-variable-observation previous current))))
 	  (format *error-output* "Converting data to observations of ~a~%" v)
-	  (let ((dataset (mapcar #'get-observation-sequence dataset)))
+	  (let ((dataset (apply #'append
+				(mapcar #'get-observation-sequence dataset))))
 	    (format *error-output* "Estimating ~a~%" v)
 	    ;;(print v)
 	    ;;(print dataset)
