@@ -398,7 +398,6 @@ VARIABLES is a list of variable definitions."
   (let ((variables (make-hash-table)))
     (loop for v in (vertices model)
 	  for (observer formatter hidden) in (slot-value model '%var-specs)
-	  ;;for dist-spec in (slot-value model '%dist-specs)
 	  do
 	     (setf (gethash v variables)
 		   (make-instance
@@ -412,6 +411,11 @@ VARIABLES is a list of variable definitions."
 
 ;; Model serialization
 
+(defwriter probability-distribution (m)
+  (loop for s in (%parameters m) collect (slot-value m s)))
+(defreader probability-distribution (m data)
+  (loop for v in data for s in (%parameters m)
+	collect (slot-value m s)))
 (defwriter random-variable (v)
   (serialize (distribution v)))
 (defreader random-variable (v data)
