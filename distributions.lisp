@@ -150,7 +150,7 @@ attempting to access probabilities." p (type-of d)))))
   (multiple-value-bind (p found?)
       (gethash (cons symbol args) cpt)
     (unless found?
-      (warn "Probability of ~a given ~a not found in conditional probability table." symbol args))
+      (error "Probability of ~a given ~a not found in conditional probability table." symbol args))
     p))
 
 (defestimator cpt (data) (symbol arguments)
