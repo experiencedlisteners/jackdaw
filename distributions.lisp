@@ -188,6 +188,18 @@ bound to SYMBOL and ARGUMENTS to ARGUMENTS."
   (:documentation "A set of PPM models that can be conditioned on other variables.
 Which PPM model is used depends on the values of the variables conditioned on."))
 
+	      
+(defmethod probability ((d ppms) observation)
+  (warn "Calling PROBABILITY directly is inefficient for PPMS. Use PROBABILITIES instead.")
+  (let* ((value (car observation))
+	 (arguments (cdr observation))
+	 (context (cdr value))
+	 (model (get-model d arguments))
+	 (location (get-location d model context arguments))
+	 (alphabet (mapcar #'car congruent-values))
+	 (distribution (ppm::get-distribution d location)))
+    (find value distribution :key #'car :test #'equal)))
+
 (defestimator ppms (data) (symbol arguments)
   ((ppms (make-hash-table :test #'equal))
    (datasets (make-hash-table :test #'equal)))
