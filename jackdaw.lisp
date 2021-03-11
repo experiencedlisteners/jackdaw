@@ -14,10 +14,13 @@
    #:probability #:conditional-probability
    #:conditional-probabilities #:estimate
    ;; Bayesian networks
+   #:observation
    #:bayesian-network #:dynamic-bayesian-network
    #:random-variable
    ;; Evaluating models
-   #:generate #:generate-sequence #:probability
+   #:generate
+   #:generate-sequence ;; TODO REMOVE
+   #:sequence-generate #:probability
    #:generate-congruent-values
    #:probabilities #:domain #:estimate
    ;; Model properties
@@ -171,7 +174,7 @@ By default, the default-form will throw an error if the key is not found."
 ;; Objects
 
 (defclass dag ()
-  ((vertices :accessor vertices)
+  ((vertices :accessor vertices :initform nil)
    (edge-table :reader edge-table :type 'hastable)))
 
 (defclass probability-distribution ()
@@ -180,13 +183,17 @@ By default, the default-form will throw an error if the key is not found."
 (defclass conditional-probability-distribution (probability-distribution) ())
 
 (defclass bayesian-network (probability-distribution dag)
-  ((%var-specs :allocation :class :type list)
+  ((%var-specs :allocation :class :type list :initform nil)
    (output :accessor output :initarg :output :initform nil)
    (output-vars :accessor output-vars :initform nil :initarg :output-vars)
    (distributions :reader distributions :type hash-table)
    (variables :reader variables :type hash-table)))
 
-(defclass dynamic-bayesian-network (bayesian-network) ())
+(defclass dynamic-bayesian-network (bayesian-network)
+  ((hidden-state :accessor hidden-state)
+   (keep-trace? :initarg :keep-trace? :accessor keep-trace? :initform nil)
+   (intermediate-marginalization :initarg :intermediate-marginalization
+				 :accessor intermediate-marginalization)))
 
 (defclass random-variable ()
   ((parents :initarg :parents :reader parents :initform nil)
@@ -198,8 +205,19 @@ By default, the default-form will throw an error if the key is not found."
    (hidden :initarg :hidden :accessor hidden :initform t)
    (observer :initarg :observer :accessor observer)))
 
+(defclass previous-random-variable ()
+  ((vertex :initarg :vertex :reader vertex)
+   (model :initarg :model :reader model :type dynamic-bayesian-network)))
+
 (defmethod edges ((m dag) vertex)
   (gethash vertex (edge-table m)))
+
+(defmethod vertices ((m dynamic-bayesian-network))
+  (append (mapcar #'previous (state-variables m))
+	  (slot-value m 'vertices)))
+
+(defmethod order ((m dag))
+  (length (vertices m)))
 
 (define-condition dag-contains-cycle (error) ())
 
@@ -260,7 +278,7 @@ stem. For example, if S is ^X, (BASENAME S) is X."
 horizontal dependencies."
   (loop for v in (edges m vertex)
      if (horizontal? v)
-       collect (basename v)))
+       collect v))
 
 (defmethod vertical-edges ((m dynamic-bayesian-network) vertex)
   "Return those dependencies of VERTEX in M that are 
@@ -323,7 +341,7 @@ VARIABLES is a list of variable definitions."
 	  variable
 	(setf (gethash v edges) parents)
 	(assert (subsetp (mapcar #'basename parents) vertices) ()
-		"The parents {~{~a~^, ~}} of ~a are no known variables of ~a"
+		"The parents {~{~a~^, ~}} of ~a are not known variables of ~a"
 		(set-difference (mapcar #'basename parents) vertices)
 		v class)
 	
@@ -356,11 +374,10 @@ VARIABLES is a list of variable definitions."
        (defclass ,class ,(if (null superclasses) '(bayesian-network) superclasses)
 	 ((%var-specs :initform ',var-specs)
 	  (%parameters :initform ',parameter-names)
+	  (vertices :initform ',vertices)
 	  ;;(%dist-specs :initform ',dist-specs)
 	  ,@direct-slots))
        ,@methods
-       (defmethod vertices ((m ,class))
-	 ',vertices)
        (defmethod edge-table ((m ,class)) ,edges)
        (defmethod initialize-instance :after
 	   ((model ,class)
@@ -391,12 +408,18 @@ VARIABLES is a list of variable definitions."
 	 (make-instance ',class :output output :output-vars output-vars :observe observe
 			,@(%lambda-list->plist parameters))))))
 
+(defmethod initialize-instance :before ((model dynamic-bayesian-network) &key observe)
+  (dolist (v observe)
+    (assert (not (horizontal? v)) ()
+	    "Cannot observe ~a in ~a because it is a horizontal dependency."
+	    v (type-of model))))
+
 (defmethod initialize-instance :after ((model bayesian-network) &key observe)
   (dolist (v (output-vars model))
     (assert (member v (vertices model)) ()
 	    "Output variable ~a is not a variable of ~a." v (type-of model)))
   (let ((variables (make-hash-table)))
-    (loop for v in (vertices model)
+    (loop for v in (slot-value model 'vertices)
 	  for (observer formatter hidden) in (slot-value model '%var-specs)
 	  do
 	     (setf (gethash v variables)
@@ -408,6 +431,16 @@ VARIABLES is a list of variable definitions."
 		    :vertex v :observer (eval observer) :output (eval formatter))))
     (setf (slot-value model 'variables) variables))
   (unless (null observe) (apply #'observe (cons model observe))))
+
+(defmethod initialize-instance :after ((model dynamic-bayesian-network) &key)
+  (let ((variables (variables model)))
+    (loop for v in (state-variables model)
+	  do
+	     (setf (gethash (previous v) variables)
+		   (make-instance
+		    'previous-random-variable
+		    :model model
+		    :vertex v)))))
 
 ;; Model serialization
 
@@ -454,13 +487,34 @@ VARIABLES is a list of variable definitions."
 	      variable)
 	(error e)))))
 
-(defmethod observations ((m bayesian-network) moment)
-  (let ((observations (make-hash-table)))
-    (dolist (v (observed-variables m) observations)
-      (setf (gethash v observations) (observed-value m v moment)))))
+
+(defmethod observation ((m dynamic-bayesian-network) moment &rest variables)
+  (dolist (v variables)
+    (assert (not (horizontal? v)) ()
+	    "~a represents the past and cannot be observed"
+	    v))
+  (call-next-method))
+
+(defmethod observation ((m bayesian-network) input &rest variables)
+  "Generate a partially observed state of M."
+  (dolist (v variables)
+    (assert (member v (vertices m)) ()
+	    "~a is not a variable of ~a" v (type-of m)))
+  (let ((observation (make-hash-table))
+	(variables (if (null variables) (observed-variables m)
+		       variables)))
+    (setf (gethash :probability observation) (pr:in 1))
+    (when *generate-a-priori-states*
+      (setf (gethash :congruent? observation) t))
+    (dolist (v variables observation)
+      (setf (gethash v observation) (observed-value m v input)))))
 
 (defmethod hidden? ((m bayesian-network) vertex)
   (hidden (model-variable m vertex)))
+
+(defmethod hidden? ((m dynamic-bayesian-network) vertex)
+  (if (horizontal? vertex) t
+      (call-next-method)))
 
 (defmethod observed? ((m bayesian-network) variable)
   (not (hidden (gethash variable (variables m)))))
@@ -496,7 +550,10 @@ VARIABLES is a list of variable definitions."
   (distribution (model-variable m vertex)))
 
 (defmethod state-variables ((m dynamic-bayesian-network))
-  (reduce #'union (mapcar (lambda (v) (horizontal-edges m v)) (vertices m))))
+  (remove-duplicates
+   (apply #'append
+	  (mapcar (lambda (v) (mapcar #'basename (horizontal-edges m v)))
+		  (slot-value m 'vertices)))))
 
 (defmethod model-variables ((m dynamic-bayesian-network))
   (union (state-variables m) (observed-variables m)))
@@ -506,21 +563,24 @@ VARIABLES is a list of variable definitions."
 			 (warn "State ~a not found in distribution." state))))
     probability))
 
-(defmethod order ((m bayesian-network))
-  (length (vertices m)))
+(defmethod congruent-states (states)
+  "Return the subset of STATES that has been marked congruent."
+  (loop for s in states if (congruent? s) collect s))
 
-(defmethod congruent-states (states observations)
-  "Return the subset of STATES that is consistent with OBSERVATIONS."
-  (loop for s in states if (observed? s observations) collect s))
-
-(defmethod congruent? (state observations)
-  "Return T if STATE is consistent with OBSERVATIONS."
-  (every #'identity
-	 (loop for v being each hash-key of observations
-	       collect (equal (gethash v observations) (gethash-or v state)))))
+(defmethod congruent? (state)
+  "Return T if STATE has been marked congruent."
+  (if *generate-a-priori-states*
+      (gethash-or :congruent? state)
+      t))
 
 (defmethod observed-variables ((m bayesian-network))
-  (remove-if (lambda (v) (hidden? m v)) (vertices m)))
+  (remove-if (lambda (v) (hidden? m v)) (slot-value m 'vertices)))
+
+(defmethod make-root-state ((v random-variable))
+  "Every root node in a Bayesian network is implicitly conditioned
+on this root state."
+  (let ((state (make-hash-table)))
+    (setf (gethash :probability state) (pr:in 1))))
 
 (defmethod make-root-state ((m bayesian-network))
   "Every root node in a Bayesian network is implicitly conditioned
@@ -534,15 +594,17 @@ on this root state."
 on this root state."
   (let ((state (make-hash-table)))
     (setf (gethash :probability state) (pr:in 1))
-    (dolist (vertex (vertices m))
+    (dolist (vertex (state-variables m))
       (setf (gethash vertex state) +inactive+))
     state))
 
-(defun branch-state (probability variable value &optional origin)
-  (let ((new-state (if (null origin) (make-hash-table)
-		       (copy-hash-table origin))))
+(defun branch-state (probability variable value origin)
+  (let ((new-state (copy-hash-table origin)))
     (setf (gethash :probability new-state) probability)
     (setf (gethash variable new-state) value)
+    (when *generate-a-priori-states*
+      (setf (gethash :congruent? new-state)
+	    (equal value (gethash variable origin))))
     new-state))
 
 (defun format-obs (observation)
@@ -550,73 +612,81 @@ on this root state."
 	  (loop for k being each hash-key of observation
 		collect (list k (gethash k observation)))))
 
-(defmethod generate-congruent-values ((m dynamic-bayesian-network) sequence
-				      &optional vertices
-					(states (list (make-root-state m))))
-  "Generate a list containing for each moment in sequence a list of all congruent
-states generated by M. Each congruent state is represented by lists whose items
-correspond to the values of variables in corresponding positions in (VERTICES MODEL)."
-  (let* ((*estimate?* t)
-	 (*generate-a-priori-states* nil)
-	 (vertices (if (null vertices) (vertices m) vertices)))
-    (let* ((states (transition m (car sequence) states
-			       :intermediate-marginalization? vertices :keep-trace? nil))
-	   (result 
-	     (loop for s in states
-		   collect
-		   (loop for v in vertices
-			 collect (gethash-or v s)))))
-      (cons result (unless (null (cdr sequence))
-		     (generate-congruent-values m (cdr sequence) vertices states))))))
+;; Input, bayesnet -> list of possible outcomes
+(defmethod generate-values ((m bayesian-network) input &optional vertices)
+  (let ((vertices (or vertices (vertices m)))
+        (*estimate?* t)
+	(*generate-a-priori-states* nil)
+	(states (generate m input)))
+    (loop for s in states
+	  collect
+	  (loop for v in vertices collect (gethash-or v s)))))
 
-(defmethod estimation-dataset ((m dynamic-bayesian-network) observations &optional vertices)
-  (let* ((congruent-values-per-moment
-	   (generate-congruent-values m (car observations) vertices))
-	 (observation 
-	   (loop for states in congruent-values-per-moment
-		 collect
-		 (progn
-		   (assert (eq (length states) 1) ()
-			   "Cannot estimate from model that is not fully observed.")
-		   (car states)))))
-    (cons observation (unless (null (cdr observations))
-			(estimation-dataset m (cdr observations) vertices)))))
+;; Input, dyn bayesnet -> list of lists of possible outcomes
+;; Technically, the Cartesian-product of these are the possible outcomes of
+;; the dynamic Bayesan network.
+(defmethod generate-values ((m dynamic-bayesian-network) input-sequence
+			 &optional vertices)
+  (loop for input in input-sequence
+	collect
+	(prog1
+	    (let ((states (call-next-method m input vertices)))
+	      (setf (hidden-state m) (transition-states m states))
+	      states))))
 
-;;(defmethod estimate ((m bayesian-network) dataset)
+(defmacro first-and-only
+    (l &optional (message "First and only requires that list contains exactly one item"))
+  `(progn
+     (assert (eq (length ,l) 1) () ,message)
+     (first ,l)))
 
-(defmethod estimate ((m dynamic-bayesian-network) dataset)
+;; Input, BN -> possible outcome (= outcome of fully observed BN)
+(defmethod fully-observed-value ((m bayesian-network) observation &optional vertices)
+  (let* ((congruent-values (generate-values m observation vertices)))
+    (first-and-only congruent-values
+	"Cannot estimate from model that is not fully observed.")))
+
+;; Input, DBN -> list of outcome each moment (= outcome of fully observed DBN)
+(defmethod fully-observed-value ((m dynamic-bayesian-network) observation &optional vertices)
+  (unless (null observation)
+    (cons (fully-observed-value m (car observation) vertices)
+	  (fully-observed-value m (cdr observation) vertices))))
+
+;; Inputs, BN -> list of outcomes
+(defmethod fully-observed-dataset ((m bayesian-network) observations &optional vertices)
+  (loop for observation in observations
+	collect	(fully-observed-value m observation vertices)))
+
+(defmethod observed-outcome->variable-outcome ((m bayesian-network) outcome indices)
+  (mapcar (lambda (i) (elt outcome i)) indices))
+
+(defmethod observed-outcome->variable-outcome ((m dynamic-bayesian-network) outcome indices)
+  (mapcar (lambda (moment) (call-next-method m moment indices)) outcome))
+ 
+(defmethod estimate ((m bayesian-network) dataset)
   (format *error-output* "Generating observations~%")
-  (let* ((dataset (estimation-dataset m dataset)))
-    (dotimes (vertex-index (order m) m)
-      (let* ((v (elt (vertices m) vertex-index))
-	     (variable (model-variable m v))
-	     (distribution (model-variable-distribution m v))
-	     (root (loop repeat (order m) collect +inactive+))
-	     (arguments
-	       (mapcar (lambda (v)
-			 (position (if (horizontal? v) (basename v) v) (vertices m)))
+  (let* ((dataset (fully-observed-dataset m dataset)))
+    (dotimes (vertex-index (order m))
+      (let* ((vertex (elt (vertices m) vertex-index))
+	     (variable (model-variable m vertex))
+	     (argument-indices
+	       (mapcar (lambda (v) (position v (vertices m)))
 		       (distribution-parents variable)))
-	     (horizontal?
-	      (mapcar (lambda (v) (horizontal? v)) (distribution-parents variable))))
-	(labels
-	    ((get-variable-observation (previous current)
-	       (mapcar (lambda (i horizontal?) (elt (if horizontal? previous current) i))
-		       (cons vertex-index arguments)
-		       (cons nil horizontal?)))
-	     (get-observation-sequence (sequence)
-	       (loop for (previous current) on (cons root sequence) by #'cdr
-		     repeat (length sequence)
-		     collect (get-variable-observation previous current))))
-	  (format *error-output* "Converting data to observations of ~a~%" v)
-	  (let ((dataset (apply #'append
-				(mapcar #'get-observation-sequence dataset))))
-	    (format *error-output* "Estimating ~a~%" v)
-	    ;;(print v)
-	    ;;(print dataset)
-	    (estimate distribution dataset)))))))
+	     (distribution (model-variable-distribution m vertex)))
+	(format *error-output* "Converting data to observations of ~a~%" vertex)
+	(let ((dataset (mapcar (lambda (observation)
+				 (observed-outcome->variable-outcome
+				  m observation argument-indices))
+			       dataset)))
+	  (format *error-output* "Estimating ~a~%" vertex)
+	  (estimate distribution dataset))))))
 
-(defmethod probability ((m bayesian-network) observation)
-  (evidence m (generate m observation)))
+(defmethod probability ((m bayesian-network) input)
+  (evidence m (generate m (observation m input))))
+
+(defmethod probability ((m dynamic-bayesian-network) input)
+  (sequence-generate m input :marginal (observed-variables m))
+  (evidence m (hidden-state m)))
 
 (defmethod conditional-probabilities ((variable random-variable) congruent-values
 				      &optional parents-state)
@@ -639,26 +709,48 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 (defmethod descr ((d probability-distribution))
   (format nil "~a" (type-of d)))
 
+(defmethod initialize ((m dynamic-bayesian-network))
+  (setf (hidden-state m) (list (make-root-state m))))
+
+;; model, state -> list of states
+(defmethod graph-generate ((m bayesian-network) parent-state
+			   &optional (sorted-vertices (topological-sort m)))
+  (let* ((parent-states
+	   (if (null (cdr sorted-vertices)) (list parent-state)
+	       (graph-generate m parent-state (cdr sorted-vertices))))
+	 (new-states))
+    (dolist (parent-state parent-states new-states)
+      (let ((variable (model-variable m (car sorted-vertices))))
+	(dolist (state (generate variable parent-state))
+	  (push state new-states))))))
+
 ;;(defmethod generate :before (v obs &optional p)
 ;;  (format t "Generating ~a~%" (descr v)))
 
-(defmethod generate ((variable random-variable) observation
-		     &optional (parent-state (make-hash-table)))
+(defmethod generate ((variable previous-random-variable)
+		     &optional (parent-state (make-root-state variable)))
+  "Variables in the previous moment are already observed and their probability
+is already incorporated in the state."
+  (list parent-state))
+
+;; variable, state -> list of states
+(defmethod generate ((variable random-variable)
+		     &optional (parent-state (make-root-state variable)))
   (let* ((vertex (vertex variable))
 	 (a-priori-congruent
 	   (congruent-values (model variable) vertex parent-state))
-	 (hidden? (hidden variable))
+	 (hidden? (not (nth-value 1 (gethash vertex parent-state))))
 	 (parent-probability (gethash :probability parent-state))
 	 (congruent-values
-	   (if (and (not hidden?))
-	       (when (member (gethash-or vertex observation)
+	   (if hidden? a-priori-congruent
+	       (when (member (gethash vertex parent-state)
 			     a-priori-congruent :test #'equal)
-		 (list (gethash vertex observation)))
-	       a-priori-congruent)))
+		 (list (gethash vertex parent-state))))))
     (flet ((normalize (probabilities)
 	     (let ((total-mass (apply #'pr:add probabilities)))
 	       (mapcar (lambda (p) (pr:div p total-mass)) probabilities)))
 	   (branch-state (value &optional probability)
+	     (format t "Parent p ~a p ~a~%" parent-probability probability) 
 	     (branch-state (unless (null probability)
 			     (pr:mul probability parent-probability))
 			   vertex value parent-state)))
@@ -669,25 +761,79 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 				    probabilities)))
 	    (mapcar #'branch-state congruent-values probabilities))))))
 
-(defmethod generate ((m bayesian-network) observation
-		     &optional (parent-state (make-root-state m)))
-  (generate-moment m parent-state observation))
-
-(defmethod generate ((m dynamic-bayesian-network) observation
-		     &optional (parent-state (list (make-root-state m))))
-  (generate-sequence m observation :congruent-states parent-state))
-		     
-(defun generate-moment (m observation &optional (parent-state (make-root-state m))
-					(vertices (get-vertical-arguments (topological-sort m))))
+;; model, [state] -> list of states
+(defmethod generate ((m bayesian-network) &optional (parent-state (make-root-state m)))
   "Generate the congruent states that can be reached from PARENT-STATE."
-  (let* ((parent-states
-	   (if (null (cdr vertices)) (list parent-state)
-	       (generate-moment m observation parent-state (cdr vertices))))
-	 (new-states))
-    (dolist (parent-state parent-states new-states)
-      (let ((variable (gethash (car vertices) (variables m))))
-	(dolist (state (generate variable observation parent-state))
-	  (push state new-states))))))
+  (let ((congruent-states (graph-generate m parent-state)))
+    (%write-states m congruent-states)
+    congruent-states))
+
+(defmethod transition-states ((m dynamic-bayesian-network) states &optional marginal)
+  ;; todo optional marginal
+  (let ((marginal (union (state-variables m) marginal))) ;; or maybe this is fine
+    (marginalize
+     (rotate-states m (marginalize states marginal)
+		    :persist marginal)
+     (mapcar #'previous marginal))))
+
+;; THere are two ways of transitioning
+;; 1. Caling transition on a moment
+;; 2. Calling generate on a moment, then (setf (hidden-state m) (transition-states congruent-states)
+
+;; model, state -> list of states (side effect: update internal state)
+(defmethod transition ((m dynamic-bayesian-network) observation final?
+		       &optional marginal) ;; Fix optional marginal
+  (let* ((*generate-a-priori-states* nil)
+	 (marginal (union (state-variables m) marginal))
+	 (observed-states (observe-states m (hidden-state m) observation))
+	 (branched-states 
+	   (mapcar (lambda (s)
+		     (let ((new-states (graph-generate m s)))
+		       (when final? (next-sequence m new-states))
+		       (transition-states m new-states marginal)))
+		   observed-states))
+	 (hidden-state (apply #'append branched-states))
+	 (hidden-state (marginalize hidden-state (mapcar #'previous marginal))))
+    (setf (hidden-state m) hidden-state)))
+
+;; TOD: Fix dealing with marginal
+
+(defmethod sequence-generate ((m dynamic-bayesian-network) moment-sequence
+			      &key marginal (write-header? t) (%moment 0))
+  "Step through a sequence and transition the model. Throw an error if a moment
+causes a dead end and no hidden states are generated.
+When done, (hidden-states m) should hold the remaining congruent states
+at the end of the sequence."
+  (when write-header? (%write-header m))
+  (when (= %moment 0) (initialize m))
+  (unless (null moment-sequence)
+    (let* ((*moment* %moment))
+      (transition m (observation m (car moment-sequence))
+		  (null (cdr moment-sequence)) marginal)
+      (when (null (hidden-state m))
+	(error "No states congruent with observation ~a of moment ~a at position #~a in sequence ~a." (format-obs (observation m (car moment-sequence))) (car moment-sequence)
+	       *moment* *sequence*))
+      (sequence-generate m (cdr moment-sequence)
+			 :%moment (1+ %moment)
+			 :write-header? nil
+			 :marginal marginal))))
+
+(defmethod input-generate ((m bayesian-network) input)
+  (generate m (observation m input)))
+
+(defmethod moment-generate ((m dynamic-bayesian-network) moment)
+  "Generate slice of joint distribution congruent with moment."
+  (flet ((branch (state)
+	   (let* ((congruent-states (graph-generate m state)))
+	     (if *generate-a-priori-states*
+		 (congruent-states congruent-states) 
+		 congruent-states))))
+    (let* ((observation (observation m moment))
+	   (observed-states (observe-states m (hidden-state m) observation)))
+      (apply #'append (mapcar #'branch observed-states)))))
+
+(defmethod input-generate ((m dynamic-bayesian-network) input)
+  (sequence-generate m input))
 
 (defun make-marginal-state (variables values &optional trace)
   (let ((state (make-hash-table)))
@@ -722,16 +868,26 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 	(setf (gethash values marginal) new-state)))
     (hash-table-values marginal)))
 
+(defmethod observe-states ((m dynamic-bayesian-network) states observation)
+  (mapcar (lambda (s) (observe-state m s observation)) states))
+
+(defmethod observe-state ((m dynamic-bayesian-network) state observation)
+  (maphash (lambda (vertex value) (when (member vertex (slot-value m 'vertices))
+				    (setf (gethash vertex state) value)))
+	   observation)
+  state)
+
 (defmethod rotate-states ((m dynamic-bayesian-network) states
-			  &key (keep-trace? nil)
+			  &key
+			    (keep-trace? (keep-trace? m))
 			    (persist (model-variables m)))
   (unless (null states)
     (cons (rotate-state m (car states) :keep-trace? keep-trace? :persist persist)
 	  (rotate-states m (cdr states) :keep-trace? keep-trace? :persist persist))))
 
 (defmethod rotate-state ((m dynamic-bayesian-network) state
-			 &key (keep-trace? nil)
-			 (persist (model-variables m)))
+			 &key (persist (model-variables m))
+			   (keep-trace? (keep-trace? m)))
   "\"Rotate\" a state. In  rotated (a priori) version of a state, every parameter
 X is renamed ^X and variables of the form ^X in STATE are dropped.
 Optionally, a trace can be kept which stores a hash table containing the dropped
@@ -746,36 +902,6 @@ values, their probability and the previous trace."
     (dolist (variable persist new-state)
       (setf (gethash (previous variable) new-state)
 	    (gethash-or variable state)))))
-  
-(defmethod transition ((m dynamic-bayesian-network) moment congruent-states
-		       &key intermediate-marginalization? (keep-trace? nil))
-  "Given each state in CONGRUENT-STATES, rotate it and generate new congruent states 
-given MOMENT. Perform an intermediate marginalization to state variables, then gather 
-all new states together and marginalize again."
-  (let* ((observation (observations m moment))
-	 (additional (if (null intermediate-marginalization?)
-			 (vertices m)
-			 (when (listp intermediate-marginalization?)
-			   intermediate-marginalization?)))
-	 (persist (union (model-variables m) additional)))
-    (flet ((generate-moment (state)
-	     (let* ((congruent-states
-		      (generate-moment m observation state)))
-	       (%write-states m congruent-states observation)
-	       (marginalize congruent-states persist))))
-      (let* ((congruent-states (rotate-states m congruent-states
-					      :keep-trace? keep-trace?
-					      :persist persist))
-	     (congruent-states
-	       (apply #'append (mapcar #'generate-moment congruent-states)))
-	     (congruent-states (marginalize congruent-states persist))
-	     (congruent-states
-	       (if *generate-a-priori-states*
-		   (congruent-states congruent-states observation) 
-		   congruent-states)))
-	(when (eq (length congruent-states) 0)
-	  (error "No states congruent with observation ~a of moment ~a at position #~a in sequence ~a." (format-obs observation) moment *moment* *sequence*))
-	congruent-states))))
 
 (defmethod variable-value ((var random-variable) state)
   (cons (gethash (vertex var) state)
@@ -786,36 +912,23 @@ all new states together and marginalize again."
     (cons (variable-value var (car states))
 	  (variable-values var (cdr states)))))
 
+(defmethod next-sequence ((m dynamic-bayesian-network) congruent-states)
+  (dolist (v (vertices m) nil)
+    (next-sequence (model-variable m v) congruent-states)))
+
 (defmethod next-sequence ((var random-variable) congruent-states)
   (let ((variable-values (variable-values var congruent-states)))
     (next-sequence (distribution var) variable-values)))
 
-(defmethod generate-sequence ((m dynamic-bayesian-network) moments
-			  &key intermediate-marginalization?
-			    (keep-trace? nil)
-			    (write-header? t)
-			    (moment 0)
-			    (congruent-states (list (make-root-state m))))
-  "Process a sequence moment by moment and return the states that remained 
-congruent by the end of the sequence."
-  (when write-header? (%write-header m))
-  (if (null moments)
-      (dolist (v (vertices m) congruent-states)
-	(next-sequence (model-variable m v) congruent-states))
-      (let* ((*moment* moment)
-	     (new-congruent-states (transition m (car moments) congruent-states
-					       :intermediate-marginalization?
-					       intermediate-marginalization?
-					       :keep-trace? keep-trace?)))
-	;;(format t "Evidence ~a, prob first con state: ~a n-cong: ~a~%"
-	;;	(evidence m new-congruent-states)
-	;;	(gethash :probability (car new-congruent-states))
-	;;	(length new-congruent-states))
-	(generate-sequence m (cdr moments)
-			   :intermediate-marginalization? intermediate-marginalization?
-			   :write-header? nil
-			   :moment (1+ moment)
-			   :congruent-states new-congruent-states))))
+(defmethod persistent-vertices ((m dynamic-bayesian-network)
+				intermediate-marginalization)
+  "Persistent variables are those variables whose values are preserved between
+moment. That is, they are not marginalized out."
+  (let ((additional (if (null intermediate-marginalization)
+			(vertices m)
+			(when (listp intermediate-marginalization)
+			  intermediate-marginalization))))
+    (union (model-variables m) additional)))
 
 (defun set-state-probability (state probability)
   (setf (gethash :probability state) probability))
@@ -846,24 +959,27 @@ congruent by the end of the sequence."
 		   '("probability"))))
     (format output "~{~a~^,~}~%" columns)))
 
-(defmethod %write-states ((m bayesian-network) states observations &optional (output (output m)))
+(defmethod %write-states ((m bayesian-network) states &optional (output (output m)))
   (dolist (state states)
-    (%write-state m state observations output)))
+    (%write-state m state output)))
 
-(defmethod %write-state ((m bayesian-network) state observations &optional (output (output m)))
+(defmethod %write-state ((m bayesian-network) state &optional (output (output m)))
   (format output "~a,~a~{,~a~^~},~a,~a~%" *sequence* *moment*
 	  (loop for v in (if (null (output-vars m))
-			     (vertices m)
+			     (slot-value m 'vertices)
 			     (output-vars m))
 		collect (funcall (formatter-function m v) (gethash v state)))
-	  (congruent? state observations) (gethash :probability state)))
+	  (congruent? state) (gethash :probability state)))
 
-(defun trace-back (state variable &optional trace)
-  (let ((new-trace (cons (gethash variable state) trace))
-	(previous-state (gethash :trace state)))
-    (if (null previous-state)
-	new-trace
-	(trace-back previous-state variable new-trace))))
+(defmethod trace-back ((m dynamic-bayesian-network) state &optional (vertices (persistent-vertices m)))
+  ;;  (let ((new-trace (cons (gethash variable state) trace))
+  (let ((trace (gethash :trace state)))
+    (if (null trace)
+	state
+	(let ((vertices (mapcar #'previous vertices)))
+	  (dolist (v vertices)
+	    (setf (gethash v state) (gethash (basename v) trace)))
+	  (trace-back m state vertices)))))
 
 (defmethod pprint-state ((m bayesian-network) state)
   (format t "(~{~{~A~^:~}~^ ~}): ~a"

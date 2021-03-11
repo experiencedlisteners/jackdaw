@@ -338,7 +338,6 @@ Store result at (CONS (CONS SYMBOL CONTEXT) ARGUMENTS)"
       (ppm:increment-event-front model))
     (setf (gethash (cons (cons symbol context) arguments) (locations d)) location)))
 
-
 (defmethod get-location ((d ppms) (model ppm:ppm) context arguments)
   "Obtain PPM location corresponding to the current context. If not found,
 this means that either "
