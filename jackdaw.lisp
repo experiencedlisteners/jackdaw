@@ -178,7 +178,11 @@ By default, the default-form will throw an error if the key is not found."
    (edge-table :reader edge-table :type 'hastable)))
 
 (defclass probability-distribution ()
-  ((%parameters :reader %parameters :initform nil)))
+  ((%parameters :reader %parameters :initform nil)
+   (domain :accessor domain :initarg :domain)
+   (observed :accessor observed :initarg :observed :initform nil)
+   (observation :accessor observation :initarg :observation
+		:initform nil)))
 
 (defclass conditional-probability-distribution (probability-distribution) ())
 
@@ -697,8 +701,11 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
   (let ((arguments (mapcar (lambda (v) (gethash v parents-state)) (distribution-parents variable))))
     (if (equal congruent-values (list +inactive+))
 	(list (pr:in 1))
-	(conditional-probabilities (distribution variable)
-				   congruent-values arguments))))
+	(progn
+	  (setf (domain distribution) congruent-values)
+	  (normalize
+	   (conditional-probabilities
+	    (distribution variable) arguments))))))
 
 (defmethod descr ((m bayesian-network))
   (format nil "~a model" (symbol-name (type-of m))))

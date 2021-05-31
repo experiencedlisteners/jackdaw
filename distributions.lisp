@@ -104,11 +104,10 @@ attempting to access probabilities." p (type-of d)))))
 				    &optional arguments)
   (probability d (cons observation arguments)))
 
-(defmethod conditional-probabilities ((d probability-distribution) congruent-values
-				      &optional arguments)
+(defmethod conditional-probabilities ((d conditional-probability-distribution) &optional arguments)
   "Obtain the probabilities of a list of possible values given arguments."
   (mapcar (lambda (val) (conditional-probability d val arguments))
-	  congruent-values))
+	  (domain d)))
 
 (defmethod estimate ((d probability-distribution) data)
   (error "Distribution of type ~a has no defined estimator." (type-of d)))
@@ -145,7 +144,7 @@ attempting to access probabilities." p (type-of d)))))
 ;;;;;;;; CONDITIONAL PROBABILITY TABLE ;;;;;;;  
 
 (defdistribution cpt (conditional-probability-distribution)
-    (&key domain (cpt (make-hash-table))) (symbol args)
+    (cpt) (symbol args)
   "A conditional probability table."
   (multiple-value-bind (p found?)
       (gethash (cons symbol args) cpt)
@@ -155,20 +154,16 @@ attempting to access probabilities." p (type-of d)))))
 
 (defestimator cpt (data) (symbol arguments)
     ((counts (make-hash-table :test 'equal))
-     (context-counts (make-hash-table :test 'equal))
-     (domain))
+     (context-counts (make-hash-table :test 'equal)))
     ((cpt
       (let ((cpt (make-hash-table :test 'equal)))
 	(maphash (lambda (obs count)
 		   (setf (gethash obs cpt)
 			 (/ count (gethash (cdr obs) context-counts))))
 		 counts)
-	cpt))
-     (domain domain))
+	cpt)))
   :observation-handler
   (progn
-    (unless (member symbol domain :test #'equal)
-      (push symbol domain))
     (setf (gethash (cons symbol arguments) counts)
 	  (1+ (gethash (cons symbol arguments) counts 0)))
     (setf (gethash arguments context-counts)
@@ -183,11 +178,7 @@ The context of a parameter is (CDR PROB), and corresponds to a list of states
 corresponding to variables that D is conditioned on. If D is not conditioned 
 on anything, the context may be set to NIL. This means that each parameter 
 must be a list of length 1 (the CDR of which is NIL)."
-  (setf (slot-value d 'cpt) (alist->hash-table alist-cpt))
-  (setf (slot-value d 'domain)
-	(remove-duplicates
-	 (loop for param being each hash-key of (cpt d) collect (car param))
-	 :test #'equal)))
+  (setf (slot-value d 'cpt) (alist->hash-table alist-cpt)))
 
 (defmethod probability-table ((d cpt))
   (let* ((table))
@@ -356,17 +347,17 @@ this means that either "
       (error "No PPM model found for arguments ~a." arguments))
     model))
 	      
-(defmethod conditional-probabilities ((d ppms) possible-values
-				      &optional arguments)
+(defmethod conditional-probabilities ((d ppms) &optional arguments)
   "Obtain the location object of the appropriate PPM model given context.
 Context is obtained by accessing the previous self of the current variable, 
 which if the current variable is an accumulator, must represent the context.
 Note that PARENTS-STATE represents a state in the current moment in which any
 parent variables are instantiated."
-  (let* ((context (cdr (car possible-values)))
+  (let* ((domain (domain d))
+	 (context (cdr (car domain)))
 	 (model (get-model d arguments))
 	 (location (get-location d model context arguments))
-	 (alphabet (mapcar #'car possible-values)))
+	 (alphabet (mapcar #'car domain)))
     (ppm:set-alphabet model alphabet)
     (mapcar (lambda (item) (pr:in (cadr item)))
 	    (ppm::get-distribution model location))))
