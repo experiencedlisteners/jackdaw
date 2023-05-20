@@ -816,7 +816,7 @@ congruent by the end of the sequence."
 (defun posterior (congruent-states)
   "Same as dividing normalizing the congruent states."
   (let* ((probabilities (mapcar #'state-probability congruent-states))
-	 (evidence (apply #'+ probabilities)))
+	 (evidence (apply #'pr:add probabilities)))
     (dolist (state congruent-states congruent-states)
       (set-state-probability state (pr:div (state-probability state) evidence)))))
 			      
