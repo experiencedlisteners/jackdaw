@@ -16,21 +16,21 @@ This model is based closely on the model described by [Van der Weij, Pearce, and
 (ql:quickload "jackdaw")
 
 (jd::defdistribution meter
-    (jd::cpt) (correction-factor) (meter)
-  (pr:mul correction-factor (car meter)
-	  (call-next-method)))
+    (jd:cpt) (&key normalization-factor meter-cpt) (meter)
+  (let ((meter-probability
+	  (jd:probability meter-cpt (cons meter nil))))
+    (pr:mul (car meter) (pr:div meter-probability normalization-factor))))
 
 (jd::defestimator
     meter (data distribution) (meter) ()
-    ((correction-factor 
-      (progn 
-	(call-next-method distribution data)
-	(apply #'pr:add 
-	       (loop
-		 for symbol in (jd:domain distribution) 
-		 collect (jd:probability
-			  distribution
-			  (cons symbol nil))))))))
+    ((meter-cpt (jd:estimate (jd::make-cpt-distribution) data))
+     (normalization-factor
+      (apply #'pr:add
+	     (loop
+	       for meter in (jd:domain (meter-cpt distribution))
+	       collect
+	       (pr:mul (car meter)
+		       (jd:probability (meter-cpt distribution) (cons meter nil))))))))
 
 (jd:defmodel rhythm (jd:dynamic-bayesian-network)
   (ioi-domain meter-domain)
@@ -61,7 +61,7 @@ This model is based closely on the model described by [Van der Weij, Pearce, and
 	  (list (- (car $d) $^p))))))
 ```
 
-The above first uses `DEFDISTRIBUTION` to defin a custom categorical probability distribution (which inherits from `JACKDAW:CPT`, an implementation of conditional probability tables that comes with jackdaw).
+The above first uses `DEFDISTRIBUTION` to defin a custom categorical probability distribution (which uses the built-in `JACKDAW:CPT`, an implementation of conditional probability tables).
 This custom distribution incorporates a factor that compensates for the fact that, in the world of discrete symbolic rhythms, metrical interpretations with longer periods have to spread out probability mass over more possible initial phases. This factor is calculated in the custom estimator defined below with `DEFESTIMATOR`.
 
 Next, `DEFMODEL` defines a dynamic Bayesian network graph with five variables (`M`, `D`, `P0`, `P`, and `I`), their graphical dependency relations, their probability distributions, and their congruency constraints.
@@ -74,7 +74,7 @@ We can use the REPL to instantiate, estimate, and query the model.
 Instantiating the model could be done as follows.
 
 ```common-lisp
-CL-USER> (jd:defparameter
+CL-USER> (defparameter
           *model*
           (make-instance 'rhythm
                          :ioi-domain '(1 2 3 4)
