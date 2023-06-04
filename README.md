@@ -1,8 +1,9 @@
 # Jackdaw
 
-Jackdaw is a Common Lisp framework for defining discrete dynamic Bayesian networks with deterministic constraints in a way that involves writing very little code.
+Jackdaw is a Common Lisp library for defining and evaluating Bayesian networks and dynamic Bayesian networks with discrete variables that may have deterministic constraints.
+Its goal is to produce very compact definitions of a wide variety of probabilistic models.
 
-The formalities underlying this framework are described in chapter three of [Van der Weij (2020)](#vdweij2020).
+The technical details of this framework are described in chapter three of [Van der Weij (2020)](#vdweij2020).
 
 Jackdaw was inspired by the [IDyOM modeling framework](https://github.com/mtpearce/idyom) by Marcus Pearce. 
 The sequence model probability distributions included in jackdaw make use of IDyOM's implementation of the PPM algorithm.
