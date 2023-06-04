@@ -19,17 +19,54 @@
 (defmacro defdistribution (class superclasses parameters
 			   (&optional symbol arguments distribution)
 			   &body body)
-  "Define a new probability distribution.
+  "Define a new probability distribution, a PROBABILITY method specialized on this distribution,
+and a factory, MAKE-<CLASS>-distribution to initialize the distribution.
 
 Define a class named CLASS with superclasses SUPERCLASSES. One of the superclasses must
 be a subclass of PROBABILITY-DISTRIBUTION. If no superclass is given, the class will be created as
 a subclass of PROBABILITY-DISTRIBUTION.
 
-A list of parameters can be given in the PARAMETERS argument. 
-The probability function should be defined in BODY. When given, SYMBOL, ARGUMENTS, and 
-DISTRIBUTION are available within BODY and are bound to respectively the symbol of which 
-the probability is required, the values of the variables on which the distribution is 
-conditioned, and the distribution instance itself."
+PARAMETERS is a list of distribution parameters. They can be expressed in lambda-list-like
+style and will be translated into class slots. See %LAMBDA-LIST->DIRECT-SLOTS for 
+more information.
+
+Furthermore, in the PROBABILITY method (see below), the slot-values of these parameters
+are bound to the symbols listed in PARAMETERS.
+
+SYMBOL, ARGUMENTS, and DISTRIBUTION are symbols which, when provided are bound in BODY
+respectively to the symbol of which we want to know the probability, the arguments on
+which it is conditioned, and a the distribution instance itself.
+
+The PROBABILITY method should, given a symbol, arguments, and probability distribution 
+return the symbol's conditional probability. It's contents are determined by the BODY
+argument.
+
+Example:
+
+The following defines a Bernouilli distribution with two slots: P and PSYMBOL.
+P represents the one parameter of the distribution. PSYMBOL is an optional keyword
+parameter that defaults to T and indicates which symbol to assign the probability P to.
+
+(defdistribution bernouilli 
+  ()                           ; superclasses
+  (p &key (psymbol t))         ; parameters
+  (obs)                        ; symbol to bind to in probability method
+  (if (equal obs psymbol) p    ; body of the probability method
+      (- 1 p)))
+
+qAs you can see, the body of the probability method can access OBS, as well as the
+parameters P and PSYMBOL.
+
+The example usage below illustrates the usage of MAKE-BERNOUILLI-DISTRIBUTION, and how PSYMBOL
+is a keyword parameter of this factory.
+
+> (probability (make-bernouilli-distribution 0.7) t)
+0.7
+> (probability (make-bernouilli-distribution 0.7 :psymbol 'a) t)
+0.3
+> (probability (make-bernouilli-distribution 0.7 :psymbol 'a) t)
+0.3
+"
   (let* ((direct-slots (%lambda-list->direct-slots parameters)))
     (assert (or (null superclasses)
 		(eq (length (remove-if (lambda (c)
@@ -59,13 +96,59 @@ conditioned, and the distribution instance itself."
        (defun ,(intern (format nil "MAKE-~A-DISTRIBUTION" (symbol-name class))) ,parameters
 	 (make-instance ',class ,@(%lambda-list->plist parameters))))))
 
+
 (defmacro defestimator (distribution (&optional data distribution-symbol)
 			(&optional symbol arguments)
 			binding-spec parameter-setters
 			&key dataset-handler observation-handler)
-  "Define an estimator of DISTRIBUTION.
+  "Define an ESTIMATE for method DISTRIBUTION.
 
-Estimators estimate the parameters of a distribution based on a set of observations."
+DISTRIBUTION is a symbol referring to a subclass of PROBABILITY-DISTRIBUTION.
+
+BINDING-SPEC is a list of symbol bindings that are bound before estimation.
+
+PARAMETER-SETTERS is a list of pairs (lists with two items), the left-hand item represents
+a slot of DISTRIBUTION, and the right-hand side is a form to which the slot value will
+be set.
+
+Estimators can by providing either one, or a combination of DATASET-HANDLER, SEQUENCE-HANDLER,
+or OBSERVATION-HANDLER. Each handler will be called respectively on the entire dataset, each sequence or each observation in each sequence.
+
+A dataset is a set of sequences of observations. See [datasets](concepts#datasets) for more information.
+
+The order of operations is as follows: first the symbols in BINDING-SPEC are bound, next the different handlers are called, and finally the PARAMETER-SETTERS are executed to assign the resulting parameters to slots of the distribution.
+
+Example:
+
+Below is an example of an estimator for this the Bernouilli distribution in the example of
+DEFDISTRIBUTION.
+
+(defestimator bernouilli 
+  (data)                              ; Symbols to bind in ESTIMATE method
+  (symbol arguments)                  ; Symbols to bind in observation handler
+    ((psymbol (car (car (car data)))) ; Binding-spec for ESTIMATE method
+     (total-count 0)                  ; used in this case to initialize some
+     (count 0))                       ; parameters used in estimation
+  ((p (/ count total-count))          ; Parameter slot setters to be called
+   (psymbol psymbol))                 ; after they have been estimated
+  :observation-handler                ; Code for updating parameters used for estimation
+  (progn
+    (incf total-count)
+    (when (not (null arguments))
+      (warn \"Arguments defined for Bernouilli distribution but these are ignored.\"))
+    (when (equal symbol psymbol)
+      (incf count))))
+
+The code below illustrates how estimate can be used with a small dataset - consisting of
+three sequences with a variable number of osbervations - to estimate a Bernouilli distribution.
+Note that we cannot use MAKE-BERNOUILLI-DISTRIBUTION here since that factory requires us to
+provide the parameter P.
+
+> (let ((dataset '(((nil t t t) (t nil) (nil t nil))))
+        (d (jd:estimate (make-instance 'jd:bernouilli) dataset)))
+    (jd:probability d nil))
+2/3
+"
   (let* ((observation-handler-code
 	   `(dolist (observation data)
 	      (let (,@(unless (null symbol) `((,symbol (car observation))))
@@ -126,8 +209,8 @@ attempting to access probabilities." p (type-of d)))))
     ((psymbol (car (car data)))
      (total-count 0)
      (count 0))
-    ((p (/ count total-count))
-     (psymbol psymbol))
+  ((p (/ count total-count))
+   (psymbol psymbol))
   :observation-handler
   (progn
     (incf total-count)
@@ -337,7 +420,6 @@ Store result at (CONS (CONS SYMBOL CONTEXT) ARGUMENTS)"
     (unless (eq symbol ppm::*sentinel*)
       (ppm:increment-event-front model))
     (setf (gethash (cons (cons symbol context) arguments) (locations d)) location)))
-
 
 (defmethod get-location ((d ppms) (model ppm:ppm) context arguments)
   "Obtain PPM location corresponding to the current context. If not found,

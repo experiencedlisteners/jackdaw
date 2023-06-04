@@ -41,6 +41,8 @@
    #:ensure-list #:inactive?
    ;; Serialization utilities
    #:defreader #:defwriter
+   ;; Output writing
+   #:output #:output-vars
    ;; Metaprogramming
    #:model-exists? #:find-model
    ;; Constants
@@ -69,9 +71,9 @@ with congruency constraints."))
 This is useful when we want to calculate things like the entropy of
 the predictive distribution.")
 (defparameter *estimate?* nil
-  "Use to modify the behavior of GENERATE-MOMENT. When T,
-GENERATE-MOMENT will only generate values consistent with observations
-and will not generate probability distributions")
+  "Use to modify the behavior of GENERATE. When T,
+GENERATE will only generate values consistent with observations
+and will not generate probability distributions. See also: GENERATE.")
 
 (defun model-exists? (model-symbol-or-name &optional (package :jackdaw))
   (not (null (find-model model-symbol-or-name package))))
@@ -113,6 +115,24 @@ and will not generate probability distributions")
       )))
 
 (defun %lambda-list->direct-slots (lambda-list)
+  "Convert a list using a subset of lambda-list syntax to a direct-slot definitions
+of a class.
+
+This function only supports required positional arguments and optional keyword arguments
+with or without default values that follow after the &key keyword.
+
+EXAMPLES:
+
+`(a b)` (two required arguments) results in
+
+`((a :initarg :a :accessor a) (b :initarg :b :accessor b))`
+
+`(a &key b)` (required argument a and optional keyword b) results in 
+`((a :initarg :a :accessor a) (b :initarg :b :accessor b :initform nil))`
+
+`(&key (a 5))` (an optional keyword argument with default value) results in 
+`((a :initarg :a :accessor a :initform 5))`
+"
   (let ((required)
 	(keys)
 	(state 'positional)
@@ -161,8 +181,7 @@ and will not generate probability distributions")
   (intern (symbol-name symbol) 'keyword))
 
 (defmacro gethash-or (key hash-table &optional (default-form `(error "~a not found in hash table." ,key)))
-  "Like gethash, but default-form is not executed if the key is found.
-By default, the default-form will throw an error if the key is not found."
+  "Like gethash, but default-form is not executed if the key is found. By default, the default-form will throw an error if the key is not found."
   `(multiple-value-bind (value found?)
        (gethash ,key ,hash-table)
      (if found? value
@@ -172,21 +191,35 @@ By default, the default-form will throw an error if the key is not found."
 
 (defclass dag ()
   ((vertices :accessor vertices)
-   (edge-table :reader edge-table :type 'hastable)))
+   (edge-table :reader edge-table :type hastable)))
 
 (defclass probability-distribution ()
-  ((%parameters :reader %parameters :initform nil)))
+  ((%parameters :reader %parameters :initform nil))
+  (:documentation "Base class of all jackdaw models and probability distributions."))
+
+(defgeneric probability (probability-distribution observation)
+  (:documentation "Return the probability of OBSERVATION according to PROBABILITY-DISTRIBUTION."))
 
 (defclass conditional-probability-distribution (probability-distribution) ())
 
 (defclass bayesian-network (probability-distribution dag)
   ((%var-specs :allocation :class :type list)
-   (output :accessor output :initarg :output :initform nil)
-   (output-vars :accessor output-vars :initform nil :initarg :output-vars)
-   (distributions :reader distributions :type hash-table)
-   (variables :reader variables :type hash-table)))
+   (output
+    :accessor output :initarg :output :initform nil
+    :documentation "A stream or string that that can be inserted into the DESTINATION argument of FORMAT. When given, the congruent states of the model in each moment are written to this stream in CSV format.")
+   (output-vars
+    :accessor output-vars :initform nil :initarg :output-vars
+    :documentation "List of variables whose value is included in the congruent states outputted in each moment.")
+   (distributions
+    :reader distributions :type hash-table
+    :documentation "Hash-table containing the probability distribution of each variable in the model, keyed by vertex name.")
+   (variables
+    :reader variables :type hash-table
+    :documentation "Hash-table containing variable instances keyed by vertex name."))
+  (:documentation "A class that combines functionality of a DAG and a PROBABILITY-DISTRIBUTION to represent a Bayesian network."))
 
-(defclass dynamic-bayesian-network (bayesian-network) ())
+(defclass dynamic-bayesian-network (bayesian-network) ()
+  (:documentation "A class representing a dynamic Bayesian network."))
 
 (defclass random-variable ()
   ((parents :initarg :parents :reader parents :initform nil)
@@ -196,7 +229,8 @@ By default, the default-form will throw an error if the key is not found."
    (distribution-parents :initarg :distribution-parents :accessor distribution-parents)
    (model :initarg :model :reader model :type bayesian-network)
    (hidden :initarg :hidden :accessor hidden :initform t)
-   (observer :initarg :observer :accessor observer)))
+   (observer :initarg :observer :accessor observer))
+  (:documentation "A class representing a random variable that can be used in a Bayesian network or a dynamic Bayesian network."))
 
 (defmethod edges ((m dag) vertex)
   (gethash vertex (edge-table m)))
@@ -246,7 +280,7 @@ given :X, return $X"
   (intern (format nil "^~A" (symbol-name v)) (symbol-package v)))
 
 (defun horizontal? (v)
-  "Return true if V is a horizontal dependency."
+  "Return T if V is a horizontal dependency."
   (eq (elt (symbol-name v) 0) #\^))
 
 (defun basename (s)
@@ -291,12 +325,38 @@ horizontal dependencies."
   (if (listp p) (car p) p))
   
 (defmacro defmodel (class superclasses parameters variables)
-  "Model definition macro
+  "Define a jackdaw model.
 
-Create a model class with name CLASS and superclasses SUPERCLASSES.
-PARAMETERS is a lambda list which supports default values and &key 
-arguments but not &optional or (a default a-supplied-p) style parameters.
-VARIABLES is a list of variable definitions."
+Define a class for the model, define an initialization methods and methods that implement the model's behavior defined by the information passed to this macro. Also define a factory function BUILD-<CLASS>-MODEL that builds instances of the model.
+
+Currently, jackdaw models can be a BAYESIAN-NETWORK or a DYNAMIC-BAYESIAN-NETWORK.
+
+CLASS is the name of the class representing the model.
+
+SUPERCLASSES is a list of superclasses. At least one of these must inherit from BAYESIAN-NETWORK. If no superclass is given, BAYESIAN-NETWORK is assumed.
+
+PARAMETER-BINDINGS is a list of parameter specification expressed as in a subset of lambda-list syntax. This syntax supports required positional arguments and keyword parameters with or without default values. The parameters are translated into class slots (see %LAMBDA-LIST->DIRECT-SLOTS for more details), parameters to MAKE-<CLASS>-MODEL, and arguments to the congruency constrain function.
+
+VARIABLES is a list of variable definitions with the syntax described below.
+
+({(V PARENTS DISTRIBUTION-SPECIFICATION CONSTRAINT &KEY (OBSERVER DEFAULT-OBSERVER) (FORMATTER #'IDENTITY) (HIDDEN T)}*)
+
+DISTRIBUTION-SPECIFICATION ::=  (DISTRIBUTION ARGUMENTS &REST PARAMETERS)
+
+V is the name of the variable.
+
+PARENTS is a list of variables that are parent-nodes of the current variable.
+
+DISTRIBUTION is the name of a probability-distribution.
+
+ARGUMENTS is a list of variables on whose value the distribution is conditioned. This must be a subset of PARENTS.
+
+CONSTRAINT-FORM is the variable's congruency constraint. Within this form, the symbols in PARENTS are bound to the values of the parent-variables in the current state, and the model-parameters listed in PARAMETERS are bound to their symbols. Furthermore, if this model is a DYNAMIC-BAYESIAN-NETWORK and the variable has itself in the previous moment as an argument, the symbol $^SELF is bound to the value of the variable in the previous moment.
+
+OBSERVER is a function that maps a moment to an observation of this variable. By default, it is DEFAULT-OBSERVER, a function that assumes that moment is represented by a PLIST where the value of the current variable is stored under a keyword with the name of the variable.
+
+FORMATTER is a function that formats the value of the variable in CSV output. See concepts#csv-output for more information. 
+"
   (let* ((direct-slots (%lambda-list->direct-slots parameters))
 	 (parameter-names (mapcar #'%param-name (remove '&key parameters)))
 	 (vertices (mapcar #'car variables))
@@ -356,11 +416,9 @@ VARIABLES is a list of variable definitions."
        (defclass ,class ,(if (null superclasses) '(bayesian-network) superclasses)
 	 ((%var-specs :initform ',var-specs)
 	  (%parameters :initform ',parameter-names)
-	  ;;(%dist-specs :initform ',dist-specs)
 	  ,@direct-slots))
        ,@methods
-       (defmethod vertices ((m ,class))
-	 ',vertices)
+       (defmethod vertices ((m ,class)) ',vertices)
        (defmethod edge-table ((m ,class)) ,edges)
        (defmethod initialize-instance :after
 	   ((model ,class)
@@ -551,14 +609,15 @@ on this root state."
 		collect (list k (gethash k observation)))))
 
 (defmethod generate-congruent-values ((m dynamic-bayesian-network) sequence
-				      &optional vertices
+				      &optional (vertices nil vertices-supplied-p)
 					(states (list (make-root-state m))))
-  "Generate a list containing for each moment in sequence a list of all congruent
+  "Generate a list containing for each moment in SEQUENCE a list of all congruent
 states generated by M. Each congruent state is represented by lists whose items
-correspond to the values of variables in corresponding positions in (VERTICES MODEL)."
+correspond to the values of variables in corresponding positions in (VERTICES MODEL),
+or, if the VERTICES argument is given, the vertices in VERTICES (a list of symbols)."
   (let* ((*estimate?* t)
 	 (*generate-a-priori-states* nil)
-	 (vertices (if (null vertices) (vertices m) vertices)))
+	 (vertices (if vertices-supplied-p vertices (vertices m))))
     (let* ((states (transition m (car sequence) states
 			       :intermediate-marginalization? vertices :keep-trace? nil))
 	   (result 
@@ -570,6 +629,16 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
 		     (generate-congruent-values m (cdr sequence) vertices states))))))
 
 (defmethod estimation-dataset ((m dynamic-bayesian-network) observations &optional vertices)
+  "Generate a list of congruent values for each observation in OBSERVATIONS.
+
+M is a dynamic Bayesian network instance.
+
+OBSERVATIONS is a dataset of dynamic Bayesian network observations (sequences).
+
+VERTICES is a list of symbols indicating vertices of M.
+
+Return a list of CONS pairs. Of each pair, the CAR is the observation and the CDR is a list of values generated by each vertex in (VERTICES MODEL), or, if VERTICES is supplied, in VERTICES.
+"
   (let* ((congruent-values-per-moment
 	   (generate-congruent-values m (car observations) vertices))
 	 (observation 
@@ -582,9 +651,16 @@ correspond to the values of variables in corresponding positions in (VERTICES MO
     (cons observation (unless (null (cdr observations))
 			(estimation-dataset m (cdr observations) vertices)))))
 
-;;(defmethod estimate ((m bayesian-network) dataset)
+(defgeneric estimate (model dataset)
+  (:documentation "Estimate MODEL from DATASET."))
 
 (defmethod estimate ((m dynamic-bayesian-network) dataset)
+  "Generate observations for the random variables in the network and estimate their
+probability distributions.
+
+Collect observations of each variable first, then, using the graphical structure of the
+network, generate observations of the variable and its parents.
+"
   (format *error-output* "Generating observations~%")
   (let* ((dataset (estimation-dataset m dataset)))
     (dotimes (vertex-index (order m) m)
@@ -644,17 +720,36 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 
 (defmethod generate ((variable random-variable) observation
 		     &optional (parent-state (make-hash-table)))
+  "Given a parent state and an observation, return the congruent states of a variable.
+
+This involves the following steps:
+
+- generate the a-priori congruent states of the variable given the parent state
+- obtain the probability of the parent state (NIL if *ESTIMATE* is T, see below)
+- obtain the congruent states of this variable
+  - if the variable is hidden, these equal the a-priori congruent states
+  - otherwise, if one of the a-priori congruent states equals the observed value, this is a list containing only just the observed value
+  - otherwise, this is an empty list
+- if *ESTIMATE* is false, generate the probability of each congruent state
+- generate a new state for each congruent value using BRANCH-STATE.
+
+When `*ESTIMATE*` is false, the probabilities of each congruent state are determined. Otherwise,
+the probabilities of each congruent state are set to NIL.
+
+Because calculating probabilities can involve costly computations, setting *ESTIMATE* to T during
+model estimation, when probabilities are not required, will speed up processing.
+"
   (let* ((vertex (vertex variable))
 	 (a-priori-congruent
 	   (congruent-values (model variable) vertex parent-state))
 	 (hidden? (hidden variable))
 	 (parent-probability (gethash :probability parent-state))
 	 (congruent-values
-	   (if (and (not hidden?))
+	   (if hidden?
+	       a-priori-congruent
 	       (when (member (gethash-or vertex observation)
 			     a-priori-congruent :test #'equal)
-		 (list (gethash vertex observation)))
-	       a-priori-congruent)))
+		 (list (gethash vertex observation))))))
     (flet ((normalize (probabilities)
 	     (let ((total-mass (apply #'pr:add probabilities)))
 	       (mapcar (lambda (p) (pr:div p total-mass)) probabilities)))
@@ -668,6 +763,9 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
 		 (probabilities (if hidden? (normalize probabilities)
 				    probabilities)))
 	    (mapcar #'branch-state congruent-values probabilities))))))
+
+(defgeneric generate (model observation &optional parent-state)
+  (:documentation "Generate the a posteriori congruent states of model M given an observation OBSERVATION."))
 
 (defmethod generate ((m bayesian-network) observation
 		     &optional (parent-state (make-root-state m)))
@@ -807,7 +905,7 @@ congruent by the end of the sequence."
 					       :intermediate-marginalization?
 					       intermediate-marginalization?
 					       :keep-trace? keep-trace?)))
-	;;(format t "Evidence ~a, prob first con state: ~a n-cong: ~a~%"
+	;; (format t "Evidence ~a, prob first con state: ~a n-cong: ~a~%"
 	;;	(evidence m new-congruent-states)
 	;;	(gethash :probability (car new-congruent-states))
 	;;	(length new-congruent-states))
