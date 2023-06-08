@@ -100,19 +100,16 @@ is a keyword parameter of this factory.
 (defmacro defestimator (distribution (&optional data distribution-symbol)
 			(&optional symbol arguments)
 			binding-spec parameter-setters
-			&key dataset-handler sequence-handler observation-handler)
+			&key dataset-handler observation-handler)
   "Define an ESTIMATE for method DISTRIBUTION.
 
 DISTRIBUTION is a symbol referring to a subclass of PROBABILITY-DISTRIBUTION.
 
 BINDING-SPEC is a list of symbol bindings that are bound before estimation.
 
-PARAMETER-SETTERS is a list of pairs (lists with two items), the left-hand item represents
-a slot of DISTRIBUTION, and the right-hand side is a form to which the slot value will
-be set.
+PARAMETER-SETTERS is a list of pairs (lists with two items), the left-hand item represents a slot of DISTRIBUTION, and the right-hand side is a form to which the slot value will be set.
 
-Estimators can by providing either one, or a combination of DATASET-HANDLER, SEQUENCE-HANDLER,
-or OBSERVATION-HANDLER. Each handler will be called respectively on the entire dataset, each sequence or each observation in each sequence.
+Estimators can by providing DATASET-HANDLER and/or SEQUENCE-HANDLER. Each handler will be called respectively on the entire dataset, each sequence or each observation in each sequence.
 
 A dataset is a set of sequences of observations. See [datasets](concepts#datasets) for more information.
 
@@ -120,8 +117,7 @@ The order of operations is as follows: first the symbols in BINDING-SPEC are bou
 
 Example:
 
-Below is an example of an estimator for this the Bernouilli distribution in the example of
-DEFDISTRIBUTION.
+Below is an example of an estimator for this the Bernouilli distribution in the example of DEFDISTRIBUTION.
 
 (defestimator bernouilli 
   (data)                              ; Symbols to bind in ESTIMATE method
@@ -139,10 +135,7 @@ DEFDISTRIBUTION.
     (when (equal symbol psymbol)
       (incf count))))
 
-The code below illustrates how estimate can be used with a small dataset - consisting of
-three sequences with a variable number of osbervations - to estimate a Bernouilli distribution.
-Note that we cannot use MAKE-BERNOUILLI-DISTRIBUTION here since that factory requires us to
-provide the parameter P.
+The code below illustrates how estimate can be used with a small dataset - consisting of three sequences with a variable number of osbervations - to estimate a Bernouilli distribution. Note that we cannot use MAKE-BERNOUILLI-DISTRIBUTION here since that factory requires us to provide the parameter P.
 
 > (let ((dataset '(((nil t t t) (t nil) (nil t nil))))
         (d (jd:estimate (make-instance 'jd:bernouilli) dataset)))
@@ -150,30 +143,26 @@ provide the parameter P.
 2/3
 "
   (let* ((observation-handler-code
-	   `(dolist (observation sequence)
+	   `(dolist (observation data)
 	      (let (,@(unless (null symbol) `((,symbol (car observation))))
 		    ,@(unless (null arguments) `((,arguments (cdr observation)))))
 		,observation-handler)))
-	 (sequence-handler-code
-	   `(dolist (sequence ,data)
-	      ,@(unless (null sequence-handler) (list sequence-handler))
-	      ,@(unless (null observation-handler)
-		 (list observation-handler-code))))
 	 (dataset-handler-code
 	   `(,@(unless (null dataset-handler) (list dataset-handler))
-	     ,@(unless (and (null sequence-handler)
-			   (null observation-handler))
-		(list sequence-handler-code)))))
+	     ,@(unless (null observation-handler)
+		 (list observation-handler-code)))))
     `(defmethod estimate ((d ,distribution) data)
        (let (,@binding-spec
 	     ,@(unless (null data) `((,data data)))
 	     ,@(unless (null distribution-symbol) `((,distribution-symbol d))))
-	 ,@(unless (every #'null (list dataset-handler sequence-handler observation-handler))
+	 ,@(unless (every #'null (list dataset-handler observation-handler))
 	    dataset-handler-code)
 	 ,@(loop for (parameter setter) in parameter-setters collect
 		 `(setf (slot-value d ',parameter)
 			,setter)))
        d)))
+
+;;;;;;;;;;;;;;; PROBABILITY API ;;;;;;;;;;;;;;
 
 (defmethod probability :before ((d probability-distribution) observation)
   (dolist (p (slot-value d '%parameters))
@@ -182,10 +171,27 @@ provide the parameter P.
 must either estimate the model or provide the parameters manually before
 attempting to access probabilities." p (type-of d)))))
 
+(defmethod conditional-probability ((d probability-distribution) observation
+				    &optional arguments)
+  (declare (ignore arguments))
+  (probability d (list observation)))
+
+(defmethod conditional-probability ((d conditional-probability-distribution) observation
+				    &optional arguments)
+  (probability d (cons observation arguments)))
+
+(defmethod conditional-probabilities ((d probability-distribution) congruent-values
+				      &optional arguments)
+  "Obtain the probabilities of a list of possible values given arguments."
+  (mapcar (lambda (val) (conditional-probability d val arguments))
+	  congruent-values))
+
 (defmethod estimate ((d probability-distribution) data)
   (error "Distribution of type ~a has no defined estimator." (type-of d)))
 
-;;;;;;;;;;;;;;;;;;; Probability distributions ;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;; PROBABILITY DISTRIBUTIONS ;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;; BERNOUILLI ;;;;;;;;;;;;;;;
 
 (defdistribution bernouilli () (p &key (psymbol t))
     (symbol)
@@ -193,7 +199,7 @@ attempting to access probabilities." p (type-of d)))))
       (- 1 p)))
 
 (defestimator bernouilli (data) (symbol arguments)
-    ((psymbol (car (car (car data))))
+    ((psymbol (car (car data)))
      (total-count 0)
      (count 0))
   ((p (/ count total-count))
@@ -206,26 +212,21 @@ attempting to access probabilities." p (type-of d)))))
     (when (equal symbol psymbol)
       (incf count))))
 
-(defdistribution uniform () () () 1) ;; probabilities are normalized automatically
+;;;;;;;;;;;;;;;;;;;; UNIFORM ;;;;;;;;;;;;;;;;;
+
+(defdistribution uniform (conditional-probability-distribution)
+    () () 1) ;; probabilities are normalized automatically
 (defestimator uniform () () () ())
 
-(defdistribution ngram-model () (&key (cpt (make-cpt-distribution))) (symbol)
-  (probability cpt symbol))
+;;;;;;;; CONDITIONAL PROBABILITY TABLE ;;;;;;;  
 
-(defestimator ngram-model (data dist) (observation)
-	      ((cpt-dataset))
-	      ((cpt (estimate (cpt dist) (print cpt-dataset))))
-	      :sequence-handler
-	      (push nil cpt-dataset)
-	      :observation-handler
-	      (push observation (car cpt-dataset)))
-
-(defdistribution cpt () (&key domain (cpt (make-hash-table))) (symbol args)
+(defdistribution cpt (conditional-probability-distribution)
+    (&key domain (cpt (make-hash-table))) (symbol args)
+  "A conditional probability table."
   (multiple-value-bind (p found?)
       (gethash (cons symbol args) cpt)
-    ;;(format t "P~w = ~a~%" (cons symbol args) (gethash (cons symbol args) cpt))
     (unless found?
-      (warn "Probability of ~a given ~a not found in conditional probability table." symbol args))
+      (error "Probability of ~a given ~a not found in conditional probability table." symbol args))
     p))
 
 (defestimator cpt (data) (symbol arguments)
@@ -249,11 +250,53 @@ attempting to access probabilities." p (type-of d)))))
     (setf (gethash arguments context-counts)
 	  (1+ (gethash arguments context-counts 0)))))
 
+(defwriter cpt (m) (hash-table->alist (p m)))
+(defreader cpt (m p) (setf (slot-value m 'p) (alist->hash-table p)))
+
+(defmethod initialize-instance :after ((d cpt) &key alist-cpt)
+  "Parameters can be supplied as an ALIST: a list with items (PARAM . PROB). 
+The context of a parameter is (CDR PROB), and corresponds to a list of states 
+corresponding to variables that D is conditioned on. If D is not conditioned 
+on anything, the context may be set to NIL. This means that each parameter 
+must be a list of length 1 (the CDR of which is NIL)."
+  (setf (slot-value d 'cpt) (alist->hash-table alist-cpt))
+  (setf (slot-value d 'domain)
+	(remove-duplicates
+	 (loop for param being each hash-key of (cpt d) collect (car param))
+	 :test #'equal)))
+
+(defmethod probability-table ((d cpt))
+  (let* ((table))
+    (maphash #'(lambda (k value)
+		 (push (append k (list value)) table))
+	     (cpt d))
+    table))
+
+;;;;;;;;;;;;;;;;;; NGRAM MODEL ;;;;;;;;;;;;;;;
+
+(defdistribution ngram-model (conditional-probability-distribution)
+    (&key (cpt (make-cpt-distribution))) (symbol arguments)
+  "Observations of an ngram model are of the form (NGRAM . ARGUMENTS), where 
+NGRAM is of the form (Xn Xn-1 ... X0). In the body of this definition, NGRAM is 
+bound to SYMBOL and ARGUMENTS to ARGUMENTS."
+  (probability cpt (append symbol arguments)))
+
+(defestimator ngram-model (data dist) (observation arguments)
+	      ((cpt-dataset))
+	      ((cpt (estimate (cpt dist) cpt-dataset)))
+	      :observation-handler
+	      (push (append observation arguments) cpt-dataset))
+  
+
+;;;;;;;;;;;;;;;;;;; IDYOM PPM ;;;;;;;;;;;;;;;;
+
 (defestimator ppm:ppm (data model) () () ()
 	      :dataset-handler
 	      (ppm:model-dataset model data :construct? t :predict? nil))
 
-(defclass ppms (probability-distribution)
+;;;;;;;;;;;;;;;;;;;;;; PPMS ;;;;;;;;;;;;;;;;;;
+
+(defclass ppms (conditional-probability-distribution)
   ((alphabet :reader alphabet :initform nil)
    (escape :initarg :escape :reader escape :initform :c)
    (mixtures :initarg :mixtures :reader mixtures :initform t)
@@ -263,36 +306,33 @@ attempting to access probabilities." p (type-of d)))))
    (locations :accessor locations :initform (make-hash-table :test #'equal)))
   (:documentation "A set of PPM models that can be conditioned on other variables.
 Which PPM model is used depends on the values of the variables conditioned on."))
+	      
+(defmethod probability ((d ppms) observation)
+  (warn "Calling PROBABILITY directly is inefficient for PPMS. Use PROBABILITIES instead.")
+  (let* ((value (car observation))
+	 (arguments (cdr observation))
+	 (context (cdr value))
+	 (model (get-model d arguments))
+	 (location (get-location d model context arguments))
+	 (distribution (ppm::get-distribution d location)))
+    (find value distribution :key #'car :test #'equal)))
 
-(defestimator ppms (data) (symbol arguments)
-  ((ppms (make-hash-table :test #'equal))
-   (datasets (make-hash-table :test #'equal)))
-  ((ppms (progn
-	   (maphash (lambda (context data)
-		      (let ((ppm (spawn-ppm d)))
-			(estimate ppm data)
-			(setf (gethash context ppms) ppm)))
-		    datasets)
-	  ppms)))
-  :sequence-handler
-  (let ((context (cdr (car sequence)))
-	(observation-sequence))
-    (dolist (observation sequence)
-      (when (not (equal (cdr observation) context))
-	(error "Context change within a sequences not allowed for a sequence model."))
-      (unless (inactive? (car observation)) (push (caar observation) observation-sequence)))
-    ;;(print (coerce (reverse observation-sequence) 'string))
-    (when (null	(gethash context datasets))
-      (setf (gethash context datasets) nil))
-    (push (reverse observation-sequence) (gethash context datasets))))
+(defestimator ppms (data) (value arguments)
+	      ((ppms (make-hash-table :test #'equal))
+	       (datasets (make-hash-table :test #'equal)))
+	      ((ppms (progn
+		       (maphash (lambda (context data)
+				  (let ((ppm (spawn-ppm d)))
+				    (estimate ppm data)
+				    (setf (gethash context ppms) ppm)))
+				datasets)
+		       ppms)))
+	      :observation-handler
+	      (progn
+		(when (null (gethash arguments datasets))
+		  (setf (gethash arguments datasets) nil))
+		(push (reverse value) (gethash arguments datasets))))
 
-(defwriter probability-distribution (m)
-  (loop for s in (%parameters m) collect (slot-value m s)))
-(defreader probability-distribution (m data)
-  (loop for v in data for s in (%parameters m)
-	collect (slot-value m s)))
-(defwriter cpt (m) (hash-table->alist (p m)))
-(defreader cpt (m p) (setf (slot-value m 'p) (alist->hash-table p)))
 (defwriter ppm:ppm (m)
     (list :leaves (utils:hash-table->alist (ppm::ppm-leaves m))
 	  :branches (utils:hash-table->alist (ppm::ppm-branches m))
@@ -331,18 +371,6 @@ Which PPM model is used depends on the values of the variables conditioned on.")
 	(deserialize model s)
 	;; Store a ppm
 	(setf (gethash arguments (ppms d)) model)))))
-
-(defmethod initialize-instance :after ((d cpt) &key alist-cpt)
-  "Parameters can be supplied as an ALIST: a list with items (PARAM . PROB). 
-The context of a parameter is (CDR PROB), and corresponds to a list of states 
-corresponding to variables that D is conditioned on. If D is not conditioned 
-on anything, the context may be set to NIL. This means that each parameter 
-must be a list of length 1 (the CDR of which is NIL)."
-  (setf (slot-value d 'cpt) (alist->hash-table alist-cpt))
-  (setf (slot-value d 'domain)
-	(remove-duplicates
-	 (loop for param being each hash-key of (cpt d) collect (car param))
-	 :test #'equal)))
 
 (defmethod spawn-ppm ((d ppms))
   "Create a PPM model with the parameter settings stored in D."
@@ -403,29 +431,18 @@ this means that either "
     (unless found?
       (error "No PPM model found for arguments ~a." arguments))
     model))
-
-(defmethod probabilities ((d probability-distribution) arguments congruent-values)
-  "Obtain the probabilities of a list of congruent values given arguments."
-  (mapcar (lambda (s) (probability d (cons s arguments)))
-	  congruent-values))
 	      
-(defmethod probabilities ((d ppms) arguments congruent-values)
+(defmethod conditional-probabilities ((d ppms) possible-values
+				      &optional arguments)
   "Obtain the location object of the appropriate PPM model given context.
 Context is obtained by accessing the previous self of the current variable, 
 which if the current variable is an accumulator, must represent the context.
 Note that PARENTS-STATE represents a state in the current moment in which any
 parent variables are instantiated."
-  (let* ((context (cdr (car congruent-values)))
+  (let* ((context (cdr (car possible-values)))
 	 (model (get-model d arguments))
 	 (location (get-location d model context arguments))
-	 (alphabet (mapcar #'car congruent-values)))
+	 (alphabet (mapcar #'car possible-values)))
     (ppm:set-alphabet model alphabet)
     (mapcar (lambda (item) (pr:in (cadr item)))
 	    (ppm::get-distribution model location))))
-
-(defmethod probability-table ((d cpt))
-  (let* ((table))
-    (maphash #'(lambda (k value)
-		 (push (append k (list value)) table))
-	     (cpt d))
-    table))

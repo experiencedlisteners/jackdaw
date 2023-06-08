@@ -2,8 +2,19 @@
   (:use #:common-lisp)
   (:nicknames :jd)
   (:export
-   ;; Top-level classes
-   #:probability-distribution #:bayesian-network #:dynamic-bayesian-network
+   ;; Probability distributions
+   #:probability-distribution
+   #:conditional-probability-distribution
+   #:ngram-model #:make-ngram-model-distribution
+   #:bernouilli #:make-bernouilli-distribution
+   #:cpt #:make-cpt-distribution
+   #:ppms #:make-ppms-distribution
+   #:uniform #:make-uniform-distribution
+   ;; Probability distributions API
+   #:probability #:conditional-probability
+   #:conditional-probabilities #:estimate
+   ;; Bayesian networks
+   #:bayesian-network #:dynamic-bayesian-network
    #:random-variable
    ;; Evaluating models
    #:generate #:generate-sequence #:probability
@@ -21,13 +32,6 @@
    #:state-probability-table #:trace-back
    #:marginalize
    #:pprint-state 
-   ;; Probability distributions API
-   #:probability #:estimate
-   ;; Probability distributions
-   #:bernouilli #:cpt #:ppms #:uniform
-   #:ngram-model #:make-bernouilli-distribution
-   #:make-cpt-distribution #:make-ppms-distribution
-   #:make-uniform-distribution #:make-ngram-model-distribution
    ;; Model definition tools
    #:defmodel #:defdistribution #:defestimator
    ;; Congruency constraint utilities
@@ -195,6 +199,8 @@ EXAMPLES:
 
 (defgeneric probability (probability-distribution observation)
   (:documentation "Return the probability of OBSERVATION according to PROBABILITY-DISTRIBUTION."))
+
+(defclass conditional-probability-distribution (probability-distribution) ())
 
 (defclass bayesian-network (probability-distribution dag)
   ((%var-specs :allocation :class :type list)
@@ -463,6 +469,11 @@ FORMATTER is a function that formats the value of the variable in CSV output. Se
 
 ;; Model serialization
 
+(defwriter probability-distribution (m)
+  (loop for s in (%parameters m) collect (slot-value m s)))
+(defreader probability-distribution (m data)
+  (loop for v in data for s in (%parameters m)
+	collect (slot-value m s)))
 (defwriter random-variable (v)
   (serialize (distribution v)))
 (defreader random-variable (v data)
@@ -673,7 +684,8 @@ network, generate observations of the variable and its parents.
 		     repeat (length sequence)
 		     collect (get-variable-observation previous current))))
 	  (format *error-output* "Converting data to observations of ~a~%" v)
-	  (let ((dataset (mapcar #'get-observation-sequence dataset)))
+	  (let ((dataset (apply #'append
+				(mapcar #'get-observation-sequence dataset))))
 	    (format *error-output* "Estimating ~a~%" v)
 	    ;;(print v)
 	    ;;(print dataset)
@@ -682,7 +694,8 @@ network, generate observations of the variable and its parents.
 (defmethod probability ((m bayesian-network) observation)
   (evidence m (generate m observation)))
 
-(defmethod probabilities ((variable random-variable) parents-state congruent-values)
+(defmethod conditional-probabilities ((variable random-variable) congruent-values
+				      &optional parents-state)
   "Obtain the probabilities of a list of CONGRUENT-VALUES of VARIABLE.
 This is just a wrapper for the PROBABILITIES of the variable's distribution.
 It grabs the arguments from the parents
@@ -690,8 +703,8 @@ and avoids a call to PROBABILITY-DISTRIBUTION when the variable is inactive."
   (let ((arguments (mapcar (lambda (v) (gethash v parents-state)) (distribution-parents variable))))
     (if (equal congruent-values (list +inactive+))
 	(list (pr:in 1))
-	(probabilities (distribution variable)
-		       arguments congruent-values))))
+	(conditional-probabilities (distribution variable)
+				   congruent-values arguments))))
 
 (defmethod descr ((m bayesian-network))
   (format nil "~a model" (symbol-name (type-of m))))
@@ -746,7 +759,7 @@ model estimation, when probabilities are not required, will speed up processing.
 			   vertex value parent-state)))
       (if *estimate?*
 	  (mapcar #'branch-state congruent-values)
-	  (let* ((probabilities (probabilities variable parent-state congruent-values))
+	  (let* ((probabilities (conditional-probabilities variable congruent-values parent-state))
 		 (probabilities (if hidden? (normalize probabilities)
 				    probabilities)))
 	    (mapcar #'branch-state congruent-values probabilities))))))

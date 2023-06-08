@@ -286,3 +286,21 @@
 		   0) () "Unexpected value of first marginal state. Maybe order changed?")
     (test (approx-equal (pr:out (gethash :probability (first (jackdaw::marginalize states '(a)))))
 			  .4))))
+(deftest ngram-model
+  (let ((dist (make-ngram-model-distribution))
+	(data '(((a a)) ((b a)) ((a a)) ((a b)) ((b b)) ((a b))))
+	(c-data `(((a a) x) ((b a) x) ((b a) x) ((a a) y) ((b a) y))))
+    (estimate dist data)
+    (test (approx-equal (conditional-probability dist '(a a)) 2/3))
+    (test (approx-equal (conditional-probability dist '(b a)) 1/3))
+    (test (approx-equal (conditional-probability dist '(a b)) 2/3))
+    (test (approx-equal (conditional-probability dist '(b b)) 1/3))
+    (estimate dist c-data)
+    (test (approx-equal (conditional-probability dist '(a a) '(x)) 1/3))
+    (test (approx-equal (conditional-probability dist '(b a) '(x)) 2/3))
+    (test (approx-equal (conditional-probability dist '(a a) '(y)) 1/2))
+    (test (approx-equal (conditional-probability dist '(b a) '(y)) 1/2))))
+      
+      
+    
+    
