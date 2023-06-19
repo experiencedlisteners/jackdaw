@@ -115,23 +115,17 @@ and will not generate probability distributions. See also: GENERATE.")
       )))
 
 (defun %lambda-list->direct-slots (lambda-list)
-  "Convert a list using a subset of lambda-list syntax to a direct-slot definitions
-of a class.
+  "Convert a list using a subset of lambda-list syntax to a direct-slot definitions of a class.
 
-This function only supports required positional arguments and optional keyword arguments
-with or without default values that follow after the &key keyword.
+This function only supports required positional arguments and optional keyword arguments with or without default values that follow after the &key keyword.
 
 EXAMPLES:
 
-`(a b)` (two required arguments) results in
+`(a b)` (two required arguments) results in `((a :initarg :a :accessor a) (b :initarg :b :accessor b))`
 
-`((a :initarg :a :accessor a) (b :initarg :b :accessor b))`
+`(a &key b)` (required argument a and optional keyword b) results in `((a :initarg :a :accessor a) (b :initarg :b :accessor b :initform nil))`
 
-`(a &key b)` (required argument a and optional keyword b) results in 
-`((a :initarg :a :accessor a) (b :initarg :b :accessor b :initform nil))`
-
-`(&key (a 5))` (an optional keyword argument with default value) results in 
-`((a :initarg :a :accessor a :initform 5))`
+`(&key (a 5))` (an optional keyword argument with default value) results in `((a :initarg :a :accessor a :initform 5))`
 "
   (let ((required)
 	(keys)
