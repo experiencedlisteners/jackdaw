@@ -1,16 +1,14 @@
 # Introduction
 
-Jackdaw is a model-definition framework that supports Bayesian networks and dynamic Bayesian networks. The latter are more fully supported at the moment.
+Jackdaw is a model-definition framework that supports Bayesian networks and dynamic Bayesian networks (the latter more fully than the former at the moment).
 
 Jackdaw can generate joint and marginal distributions conditioned on observations, enabling for exact Bayesian inference on simple generative models.
 
 Furthermore, it allows implementing model estimation procedures enabling the estimation of generative models from datasets.
 
-# Concepts
+# Core concepts
 
-## Jackdaw model
 
-A jackdaw model is either a Bayesian network or a dynamic Bayesian network. The model consists of a set of random variables, associated probability distributions, and associated *congruency constraints*, functions that generate the set of possible outcomes of a random variable, optionally conditioned on a subset of it's parent-variables.
 
 ## Bayesian network
 
@@ -19,6 +17,33 @@ A Bayesian network is a set of random variables organised in a directed a-cyclic
 ## Dynamic Bayesian network
 
 A dynamic Bayesian network is a Bayesian network that generates sequences of observations. Distributions and congruency functions associated with random variables can be conditioned on outcomes in the previous observation.
+
+## Definition macros
+
+DEFDISTRIBUTION defines subclasses of PROBABILITY-DISTRIBUTION.
+
+A jackdaw model is a subclass of BAYESIAN-NETWORK (a subclass of PROBABILITY-DISTRIBUTION) or DYNAMIC-BAYESIAN-NETWORK (a subclass of BAYESIAN-NETWORK).
+These models are defined by the DEFMODEL macro.
+
+A jackdaw model definition creates defines a class with the name of the model with a set of parameters, a set of random variables (instances of RANDOM-VARIABLE), associated probability distributions, and associated *congruency constraints*, functions that generate the set of possible outcomes of a random variable, optionally conditioned on a subset of it's parent-variables.
+
+DEFESTIMATOR defines estimators for any probability distribution.
+
+## Domains
+
+In this documentation, the *domain* of a probability distribution refers its possible outcomes.
+
+For BAYESIAN-NETWORK and DYNAMIC-BAYESIAN-NETWORK, the method GENERATE will generate the domain of the generative model. In the case of DYNAMIC-BAYESIAN-NETWORK, this domain is conditioned on an outcome in a previous moment.
+
+There is no explicit API for keeping track of the domain of a probability distribution.
+
+## Probability
+
+The methods PROBABILITY, CONDITIONAL-PROBABILITY and CONDITIONAL-PROBABILITIES can be used on PROBABILITY-DISTRIBUTION and all of its subclasses.
+
+## Parameters
+
+Parameters are defined as class-slots by DEFMODEL.
 
 ## Datasets and observations
 
@@ -40,11 +65,9 @@ A state is whatever the variables of a model jointly generate. In jackdaw, state
 
 Model estimation currently supported for dynamic Bayesian networks, but not for normal Bayesian networks.
 
-For probability distributions, estimators can be defined using DEFESTIMATOR.
+The macro DEFESTIMATOR allows the definition of estimators for any probability distribution.
 
 A model is estimated from a dataset of observations. As such, a dynamic Bayesian network is estimated from a dataset of sequences of moments (see [Datasets and observations](concepts#datasets-and-observations).)
-
-Unfortunately this logic currently breaks down for estimators defined by DEFESTIMATOR. These estimators assume that the dataset consists of sequences of observations.
 
 # Configuration
 
